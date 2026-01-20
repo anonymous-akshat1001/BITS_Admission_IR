@@ -1,18 +1,22 @@
-
 import os
 import re
 import json
 import datetime
 import logging
 import warnings
+import uuid
+
 from dotenv import load_dotenv
+
 from qdrant_client import QdrantClient, models
-from langchain_community.document_loaders import PyMuPDFLoader 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
+from langchain_core.documents import Document
+
 from fastembed import SparseTextEmbedding
-from langchain_core.documents import Document 
-import uuid 
+
 
 # Suppress specific warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -51,7 +55,7 @@ DENSE_VECTOR_NAME = "dense-vector"
 SPARSE_VECTOR_NAME = "sparse-vector"
 
 
-DOCUMENT_FOLDER_PATH = "../../document_corpus"
+DOCUMENT_FOLDER_PATH = "../document_corpus"
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 150 
 TEXT_SPLITTER_SEPARATORS = ["# ", "## ", "### ", "\n\n", "\n", ". ", "! ", "? ", " "]

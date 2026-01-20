@@ -1,22 +1,31 @@
-
 import os
 import warnings
 import logging
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+from dotenv import load_dotenv
 from qdrant_client import QdrantClient
+
 from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+
+from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain.prompts import PromptTemplate
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import CrossEncoderReranker
-from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 from langchain_core.documents import Document
+
+# Correct imports
+from langchain_classic.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+
+load_dotenv()
+
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -59,6 +68,7 @@ def setup_reranking_retriever(client, collection_name, dense_embed_model, sparse
     reranker = CrossEncoderReranker(model=cross_encoder, top_n=RERANKER_TOP_N)
     logger.info(f"Reranker configured (top_n={RERANKER_TOP_N}).")
     compression_retriever = ContextualCompressionRetriever(base_compressor=reranker, base_retriever=base_retriever)
+
     logger.info("Reranking retriever setup complete.")
     return compression_retriever
 
