@@ -8,7 +8,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
 from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
@@ -24,17 +23,20 @@ from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
 from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
-load_dotenv()
 
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# from dotenv import load_dotenv
+# load_dotenv()
+
+
 #Configuration
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-QDRANT_URL = os.getenv("QDRANT_URL", os.getenv("QDRANT_URL"))
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", os.getenv("QDRANT_API_KEY"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 if not OPENAI_API_KEY or not QDRANT_URL or not QDRANT_API_KEY:
     logger.error("API keys/URL missing. Set env vars.")
@@ -90,23 +92,20 @@ Answer:
 #FastAPI Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("FastAPI startup: Initializing RAG...")
+    logger.info("FastAPI startup: Connecting to Qdrant only...")
     try:
-        rag_components["qdrant_client"] = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
-        rag_components["llm"] = ChatOpenAI(openai_api_key=OPENAI_API_KEY, model_name=LLM_MODEL_NAME , temperature=0.2)
-        rag_components["dense_embeddings"] = OpenAIEmbeddings(model=OPENAI_EMBED_MODEL, openai_api_key=OPENAI_API_KEY, disallowed_special=())
-        rag_components["sparse_embeddings"] = FastEmbedSparse(model_name=SPARSE_MODEL_NAME)
-        rag_components["cross_encoder"] = HuggingFaceCrossEncoder(model_name=CROSS_ENCODER_MODEL_NAME)
-        rag_components["hybrid_retriever"] = setup_hybrid_retriever_only(rag_components["qdrant_client"], COLLECTION_NAME, rag_components["dense_embeddings"], rag_components["sparse_embeddings"])
-        rag_components["reranking_retriever"] = setup_reranking_retriever(rag_components["qdrant_client"], COLLECTION_NAME, rag_components["dense_embeddings"], rag_components["sparse_embeddings"], rag_components["cross_encoder"])
-        rag_components["hybrid_rag_chain"] = setup_rag_chain(rag_components["hybrid_retriever"], rag_components["llm"])
-        rag_components["reranking_rag_chain"] = setup_rag_chain(rag_components["reranking_retriever"], rag_components["llm"])
-        logger.info("RAG components initialized.")
+        rag_components["qdrant_client"] = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=60
+        )
+        logger.info("Qdrant connected.")
     except Exception as e:
-        logger.exception(f"Failed RAG init: {e}")
+        logger.exception(f"Startup failed: {e}")
     yield
     logger.info("FastAPI shutdown.")
     rag_components.clear()
+
 
 #Pydantic Models
 class QueryRequest(BaseModel):
@@ -140,6 +139,62 @@ class QueryResponse(BaseModel):
     answer: str
     source_documents: List[SourceDocumentResponse]
 
+
+def initialize_rag():
+    if "hybrid_rag_chain" in rag_components:
+        return  # already initialized
+
+    logger.info("Lazy RAG initialization started...")
+
+    rag_components["llm"] = ChatOpenAI(
+        openai_api_key=OPENAI_API_KEY,
+        model_name=LLM_MODEL_NAME,
+        temperature=0.2
+    )
+
+    rag_components["dense_embeddings"] = OpenAIEmbeddings(
+        model=OPENAI_EMBED_MODEL,
+        openai_api_key=OPENAI_API_KEY,
+        disallowed_special=()
+    )
+
+    rag_components["sparse_embeddings"] = FastEmbedSparse(
+        model_name=SPARSE_MODEL_NAME
+    )
+
+    rag_components["cross_encoder"] = HuggingFaceCrossEncoder(
+        model_name=CROSS_ENCODER_MODEL_NAME
+    )
+
+    rag_components["hybrid_retriever"] = setup_hybrid_retriever_only(
+        rag_components["qdrant_client"],
+        COLLECTION_NAME,
+        rag_components["dense_embeddings"],
+        rag_components["sparse_embeddings"]
+    )
+
+    rag_components["reranking_retriever"] = setup_reranking_retriever(
+        rag_components["qdrant_client"],
+        COLLECTION_NAME,
+        rag_components["dense_embeddings"],
+        rag_components["sparse_embeddings"],
+        rag_components["cross_encoder"]
+    )
+
+    rag_components["hybrid_rag_chain"] = setup_rag_chain(
+        rag_components["hybrid_retriever"],
+        rag_components["llm"]
+    )
+
+    rag_components["reranking_rag_chain"] = setup_rag_chain(
+        rag_components["reranking_retriever"],
+        rag_components["llm"]
+    )
+
+    logger.info("Lazy RAG initialization complete.")
+
+
+
 #App Instance
 app = FastAPI(title="Hybrid RAG API", version="1.0.0", lifespan=lifespan)
 
@@ -161,6 +216,7 @@ async def read_root(): return {"message": "Welcome to Hybrid RAG API"}
 
 @app.post("/query/hybrid/", response_model=QueryResponse)
 async def query_hybrid(request: QueryRequest):
+    initialize_rag()
     logger.info(f"Hybrid query: '{request.query[:50]}...'" )
     if "hybrid_rag_chain" not in rag_components:
         raise HTTPException(503, "RAG not initialized")
@@ -177,6 +233,7 @@ async def query_hybrid(request: QueryRequest):
 
 @app.post("/query/hybrid-rerank/", response_model=QueryResponse)
 async def query_hybrid_rerank(request: QueryRequest):
+    initialize_rag()
     logger.info(f"Hybrid-rerank query: '{request.query[:50]}...'" )
     if "reranking_rag_chain" not in rag_components:
         raise HTTPException(503, "RAG not initialized")
