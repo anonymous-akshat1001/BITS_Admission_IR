@@ -4,239 +4,43 @@ import logging
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
+# Suppress warnings FIRST
+os.environ['OMP_NUM_THREADS'] = '1'
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, SparseVectorParams, Distance
-
-from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
-
-# Not using OpenAI embeddings as of now as it required payment
-# from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-
-# Using the free and offline option
-from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
-
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.documents import Document
-
-# Correct imports
-from langchain_classic.retrievers import ContextualCompressionRetriever       
-from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
-from langchain_community.cross_encoders import HuggingFaceCrossEncoder
-
-from qdrant_client.http.exceptions import UnexpectedResponse
-
-
-
 from dotenv import load_dotenv
 load_dotenv()
 
-warnings.filterwarnings("ignore", category=FutureWarning)
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-#Configuration
-# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")      // going offline hence not needed for the time being
+# Configuration - load early
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
-# ADD OPENAI KEY WHEN USED
 if not QDRANT_URL or not QDRANT_API_KEY:
-    logger.error("API keys/URL missing. Set env vars.")
+    logger.error("CRITICAL: Missing QDRANT_URL or QDRANT_API_KEY environment variables!")
 
 COLLECTION_NAME = "hybrid_corpus_v1"
 DENSE_VECTOR_NAME = "dense-vector"
 SPARSE_VECTOR_NAME = "sparse-vector"
 SPARSE_MODEL_NAME = "prithivida/Splade_PP_en_v1"
-# Going offline hence not needed 
-# OPENAI_EMBED_MODEL = "text-embedding-ada-002"
-# LLM_MODEL_NAME = "gpt-3.5-turbo"
 CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 HYBRID_RETRIEVER_SEARCH_K = 10
 RERANKING_BASE_SEARCH_K = 20
 RERANKER_TOP_N = 3
 
+# Global state
 rag_components = {}
-initialization_complete = False
+rag_initialized = False
 
-#Helper Functions 
-
-def recreate_collection_if_exists(client, collection_name):
-    try:
-        client.delete_collection(collection_name=collection_name)
-        logger.info(f"Deleted existing collection: {collection_name}")
-    except Exception:
-        logger.info(f"Collection {collection_name} did not exist, creating fresh.")
-
-
-
-def setup_hybrid_retriever_only(client, collection_name, dense_embed_model, sparse_embed_model):
-    logger.info("Setting up standard hybrid retriever...")
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=collection_name,
-        embedding=dense_embed_model,
-        sparse_embedding=sparse_embed_model,
-        retrieval_mode=RetrievalMode.HYBRID,
-        vector_name=DENSE_VECTOR_NAME,
-        sparse_vector_name=SPARSE_VECTOR_NAME,
-    )
-    retriever = vector_store.as_retriever(search_kwargs={'k': HYBRID_RETRIEVER_SEARCH_K})
-    logger.info(f"Standard hybrid retriever setup complete (k={HYBRID_RETRIEVER_SEARCH_K}).")
-    return retriever
-
-
-# Not using the Contextual Reranker
-
-
-# def setup_reranking_retriever(client, collection_name, dense_embed_model, sparse_embed_model, cross_encoder):
-#     logger.info("Setting up reranking retriever...")
-#     vector_store = QdrantVectorStore(
-#         client=client,
-#         collection_name=collection_name,
-#         embedding=dense_embed_model,
-#         sparse_embedding=sparse_embed_model,
-#         retrieval_mode=RetrievalMode.HYBRID,
-#         vector_name=DENSE_VECTOR_NAME,
-#         sparse_vector_name=SPARSE_VECTOR_NAME
-#     )
-#     base_retriever = vector_store.as_retriever(search_kwargs={'k': RERANKING_BASE_SEARCH_K})
-#     logger.info(f"Reranking base retriever configured (k={RERANKING_BASE_SEARCH_K}).")
-#     reranker = CrossEncoderReranker(model=cross_encoder, top_n=RERANKER_TOP_N)
-#     logger.info(f"Reranker configured (top_n={RERANKER_TOP_N}).")
-#     compression_retriever = ContextualCompressionRetriever(
-#         base_compressor=reranker,
-#         base_retriever=base_retriever
-#     )
-#     logger.info("Reranking retriever setup complete.")
-#     return compression_retriever
-
-
-def setup_reranking_retriever(
-    client,
-    collection_name,
-    dense_embed_model,
-    sparse_embed_model,
-    cross_encoder
-):
-    logger.info("Setting up reranking retriever...")
-
-    vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=collection_name,
-        embedding=dense_embed_model,
-        sparse_embedding=sparse_embed_model,
-        retrieval_mode=RetrievalMode.HYBRID,
-        vector_name=DENSE_VECTOR_NAME,
-        sparse_vector_name=SPARSE_VECTOR_NAME
-    )
-
-    base_retriever = vector_store.as_retriever(
-        search_kwargs={"k": RERANKING_BASE_SEARCH_K}
-    )
-    logger.info(
-        f"Reranking base retriever configured (k={RERANKING_BASE_SEARCH_K})."
-    )
-
-    reranker = CrossEncoderReranker(
-        model=cross_encoder,
-        top_n=RERANKER_TOP_N
-    )
-    logger.info(f"Reranker configured (top_n={RERANKER_TOP_N}).")
-
-    compression_retriever = ContextualCompressionRetriever(
-        base_retriever=base_retriever,
-        base_compressor=reranker
-    )
-
-    logger.info("Reranking retriever setup complete.")
-    return compression_retriever
-
-
-
-
-# def setup_rag_chain(retriever, llm):
-#     logger.info("Setting up RAG chain...")
-#     template = """
-#         You are a helpful Q&A assistant for BITS Pilani. 
-#         Answer questions only using the provided context. 
-#         If the answer is not in the context, reply with: "I don't know based on the given information." Be clear, concise, and accurate.
-#         Context:{context}
-#         Question: {question}
-#         Answer:
-#     """
-#     prompt = PromptTemplate.from_template(template)
-#     chain = (
-#         {"context": retriever, "question": RunnablePassthrough()}
-#         | prompt
-#         | llm
-#         | StrOutputParser()
-#     )
-#     logger.info("RAG chain setup complete.")
-#     return chain
-
-# Just pure retrieval at this point
-def answer_from_docs(docs: List[Document]) -> str:
-    if not docs:
-        return "I don't know based on the given information."
-    return docs[0].page_content
-
-
-def recreate_collection(client, collection_name, dense_dim: int):
-    try:
-        client.delete_collection(collection_name)
-        logger.info(f"Deleted existing collection: {collection_name}")
-    except Exception:
-        logger.info("No existing collection to delete")
-
-    client.create_collection(
-        collection_name=collection_name,
-        vectors_config={
-            DENSE_VECTOR_NAME: VectorParams(
-                size=dense_dim,
-                distance=Distance.COSINE
-            )
-        },
-        sparse_vectors_config={
-            SPARSE_VECTOR_NAME: SparseVectorParams()
-        }
-    )
-
-    logger.info(
-        f"Created collection '{collection_name}' "
-        f"with dense_dim={dense_dim}"
-    ) 
-
-
-#FastAPI Lifespan - Modified to not block startup
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("FastAPI startup: Initializing Qdrant client...")
-    try:
-        # Only initialize Qdrant client on startup - lightweight
-        rag_components["qdrant_client"] = QdrantClient(
-            url=QDRANT_URL,
-            api_key=QDRANT_API_KEY,
-            timeout=60
-        )
-        logger.info("Qdrant client initialized successfully.")
-        logger.info("Heavy model loading will happen on first request (lazy init)")
-    except Exception as e:
-        logger.exception(f"Qdrant client initialization failed: {e}")
-        rag_components["qdrant_client"] = None
-    
-    logger.info("FastAPI startup complete - server is ready to accept requests.")
-    yield
-    
-    logger.info("FastAPI shutdown initiated.")
-    rag_components.clear()
-
-#Pydantic Models
+# Pydantic Models
 class QueryRequest(BaseModel):
     query: str
 
@@ -256,7 +60,58 @@ class SourceDocumentResponse(BaseModel):
     page_content: str
     metadata: SourceDocumentMetadata
 
-def format_docs(docs: List[Document]) -> List[SourceDocumentResponse]:
+class QueryResponse(BaseModel):
+    answer: str
+    source_documents: List[SourceDocumentResponse]
+
+# FastAPI Lifespan - MINIMAL startup, no heavy imports
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("=" * 60)
+    logger.info("FastAPI startup initiated")
+    logger.info(f"PORT environment variable: {os.getenv('PORT', 'NOT SET')}")
+    logger.info("=" * 60)
+    
+    # Only do minimal initialization
+    try:
+        from qdrant_client import QdrantClient
+        rag_components["qdrant_client"] = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=60
+        )
+        logger.info("✓ Qdrant client initialized")
+    except Exception as e:
+        logger.error(f"✗ Qdrant client failed: {e}")
+        rag_components["qdrant_client"] = None
+    
+    logger.info("✓ Server ready - models will load on first request")
+    logger.info("=" * 60)
+    
+    yield
+    
+    logger.info("FastAPI shutdown")
+    rag_components.clear()
+
+# Create app instance
+app = FastAPI(
+    title="Hybrid RAG API",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Helper function to format documents
+def format_docs(docs) -> List[SourceDocumentResponse]:
+    from langchain_core.documents import Document
     formatted = []
     for doc in docs:
         metadata_dict = doc.metadata.copy()
@@ -271,209 +126,167 @@ def format_docs(docs: List[Document]) -> List[SourceDocumentResponse]:
         )
     return formatted
 
-class QueryResponse(BaseModel):
-    answer: str
-    source_documents: List[SourceDocumentResponse]
+def answer_from_docs(docs) -> str:
+    if not docs:
+        return "I don't know based on the given information."
+    return docs[0].page_content
 
+# Lazy initialization function
 def initialize_rag():
-    """Lazy initialization of heavy RAG components"""
-    # if "hybrid_rag_chain" in rag_components:
-    #     return  # already initialized
-
-    if "hybrid_retriever" in rag_components:
-        return
-
-
-    logger.info("Lazy RAG initialization started...")
+    global rag_initialized
     
-    # Check if Qdrant client exists
+    if rag_initialized:
+        return
+    
+    logger.info("=" * 60)
+    logger.info("LAZY INITIALIZATION: Loading heavy models...")
+    logger.info("=" * 60)
+    
     if not rag_components.get("qdrant_client"):
         raise HTTPException(503, "Qdrant client not available")
-
+    
     try:
-        # rag_components["llm"] = ChatOpenAI(
-        #     openai_api_key=OPENAI_API_KEY,
-        #     model_name=LLM_MODEL_NAME,
-        #     temperature=0.2
-        # )
-
-        # Not using OpenAI as of now
-        # rag_components["dense_embeddings"] = OpenAIEmbeddings(
-        #     model=OPENAI_EMBED_MODEL,
-        #     openai_api_key=OPENAI_API_KEY,
-        #     disallowed_special=()
-        # )
-
-        # recreate_collection(
-        #     rag_components["qdrant_client"],
-        #     COLLECTION_NAME,
-        #     dense_dim=384  # BGE-small-en
-        # )
-
-
+        # Import heavy libraries only when needed
+        from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+        from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
+        from langchain_classic.retrievers import ContextualCompressionRetriever
+        from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
+        from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+        
+        logger.info("Loading dense embeddings...")
         rag_components["dense_embeddings"] = FastEmbedEmbeddings(
             model_name="BAAI/bge-small-en-v1.5"
         )
-
-
-
+        logger.info("✓ Dense embeddings loaded")
+        
+        logger.info("Loading sparse embeddings...")
         rag_components["sparse_embeddings"] = FastEmbedSparse(
             model_name=SPARSE_MODEL_NAME
         )
-
+        logger.info("✓ Sparse embeddings loaded")
+        
+        logger.info("Loading cross encoder...")
         rag_components["cross_encoder"] = HuggingFaceCrossEncoder(
             model_name=CROSS_ENCODER_MODEL_NAME
         )
-
-        rag_components["hybrid_retriever"] = setup_hybrid_retriever_only(
-            rag_components["qdrant_client"],
-            COLLECTION_NAME,
-            rag_components["dense_embeddings"],
-            rag_components["sparse_embeddings"]
+        logger.info("✓ Cross encoder loaded")
+        
+        # Setup hybrid retriever
+        logger.info("Setting up hybrid retriever...")
+        vector_store = QdrantVectorStore(
+            client=rag_components["qdrant_client"],
+            collection_name=COLLECTION_NAME,
+            embedding=rag_components["dense_embeddings"],
+            sparse_embedding=rag_components["sparse_embeddings"],
+            retrieval_mode=RetrievalMode.HYBRID,
+            vector_name=DENSE_VECTOR_NAME,
+            sparse_vector_name=SPARSE_VECTOR_NAME,
         )
-
-
-        rag_components["reranking_retriever"] = setup_reranking_retriever(
-            rag_components["qdrant_client"],
-            COLLECTION_NAME,
-            rag_components["dense_embeddings"],
-            rag_components["sparse_embeddings"],
-            rag_components["cross_encoder"]
+        rag_components["hybrid_retriever"] = vector_store.as_retriever(
+            search_kwargs={'k': HYBRID_RETRIEVER_SEARCH_K}
         )
-
-        # rag_components["hybrid_rag_chain"] = setup_rag_chain(
-        #     rag_components["hybrid_retriever"],
-        #     rag_components["llm"]
-        # )
-
-        # rag_components["reranking_rag_chain"] = setup_rag_chain(
-        #     rag_components["reranking_retriever"],
-        #     rag_components["llm"]
-        # )
-
-        logger.info("Lazy RAG initialization complete.")
+        logger.info("✓ Hybrid retriever ready")
+        
+        # Setup reranking retriever
+        logger.info("Setting up reranking retriever...")
+        vector_store_rerank = QdrantVectorStore(
+            client=rag_components["qdrant_client"],
+            collection_name=COLLECTION_NAME,
+            embedding=rag_components["dense_embeddings"],
+            sparse_embedding=rag_components["sparse_embeddings"],
+            retrieval_mode=RetrievalMode.HYBRID,
+            vector_name=DENSE_VECTOR_NAME,
+            sparse_vector_name=SPARSE_VECTOR_NAME
+        )
+        base_retriever = vector_store_rerank.as_retriever(
+            search_kwargs={"k": RERANKING_BASE_SEARCH_K}
+        )
+        reranker = CrossEncoderReranker(
+            model=rag_components["cross_encoder"],
+            top_n=RERANKER_TOP_N
+        )
+        rag_components["reranking_retriever"] = ContextualCompressionRetriever(
+            base_retriever=base_retriever,
+            base_compressor=reranker
+        )
+        logger.info("✓ Reranking retriever ready")
+        
+        rag_initialized = True
+        logger.info("=" * 60)
+        logger.info("✓✓✓ ALL MODELS LOADED SUCCESSFULLY ✓✓✓")
+        logger.info("=" * 60)
+        
     except Exception as e:
         logger.exception(f"RAG initialization failed: {e}")
         raise HTTPException(500, f"Failed to initialize RAG: {str(e)}")
 
-
-
-rag_initialized = False
-
-def ensure_rag_initialized():
-    global rag_initialized
-    if not rag_initialized:
-        initialize_rag()
-        rag_initialized = True
-
-
-
-
-
-#App Instance
-app = FastAPI(title="Hybrid RAG API", version="1.0.0", lifespan=lifespan)
-
-#Add CORS Middleware
-origins = ["*"]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # API Endpoints
-@app.on_event("startup")
-async def startup_event():
-    logger.info(f"Server starting on port {os.getenv('PORT', '8000')}")
-
-
 @app.get("/")
 async def read_root():
-    return {"message": "Welcome to Hybrid RAG API", "status": "running"}
-
+    return {
+        "message": "Hybrid RAG API is running",
+        "status": "online",
+        "models_loaded": rag_initialized
+    }
 
 @app.get("/health")
 async def health():
     return {
         "status": "ok",
         "qdrant_connected": rag_components.get("qdrant_client") is not None,
-        "models_loaded": "hybrid_retriever" in rag_components
+        "models_loaded": rag_initialized
     }
-
 
 @app.post("/query/hybrid/", response_model=QueryResponse)
 async def query_hybrid(request: QueryRequest):
-    # Initialize RAG components on first request
-    # initialize_rag()
-
-    ensure_rag_initialized()
+    # Initialize on first request
+    if not rag_initialized:
+        initialize_rag()
     
     logger.info(f"Hybrid query: '{request.query[:50]}...'")
     
-    # if "hybrid_rag_chain" not in rag_components:
-    #     raise HTTPException(503, "RAG not initialized")
-
     if "hybrid_retriever" not in rag_components:
         raise HTTPException(503, "Retriever not initialized")
-
     
     try:
-        retriever = rag_components["hybrid_retriever"]
-        # docs = retriever.invoke(request.query)
         docs = rag_components["hybrid_retriever"].invoke(request.query)
-        # chain = rag_components["hybrid_rag_chain"]
-        # answer = chain.invoke(request.query)
         answer = answer_from_docs(docs)
-        logger.info(f"Hybrid answer: '{answer[:50]}...'")
-
-        logger.info(f"Retrieved {len(docs)} documents")
-        if docs:
-            logger.info(f"Top doc preview: {docs[0].page_content[:200]}")
-
+        logger.info(f"Answer generated: '{answer[:50]}...'")
+        
         return QueryResponse(answer=answer, source_documents=format_docs(docs))
     except Exception as e:
-        logger.exception(f"Error hybrid query: {e}")
+        logger.exception(f"Error in hybrid query: {e}")
         raise HTTPException(500, str(e))
-
-
 
 @app.post("/query/hybrid-rerank/", response_model=QueryResponse)
 async def query_hybrid_rerank(request: QueryRequest):
-    # Initialize RAG components on first request
-    # initialize_rag()
-
-
-    ensure_rag_initialized()
-
+    # Initialize on first request
+    if not rag_initialized:
+        initialize_rag()
     
     logger.info(f"Hybrid-rerank query: '{request.query[:50]}...'")
     
-    # if "reranking_rag_chain" not in rag_components:
-    #     raise HTTPException(503, "RAG not initialized")
-
     if "reranking_retriever" not in rag_components:
-        raise HTTPException(503, "Retriever not initialized")
-
+        raise HTTPException(503, "Reranking retriever not initialized")
     
     try:
-        retriever = rag_components["reranking_retriever"]
-        # docs = retriever.invoke(request.query)
         docs = rag_components["reranking_retriever"].invoke(request.query)
-        # chain = rag_components["reranking_rag_chain"]
-        # answer = chain.invoke(request.query)
         answer = answer_from_docs(docs)
-        logger.info(f"Hybrid-rerank answer: '{answer[:50]}...'")
+        logger.info(f"Reranked answer: '{answer[:50]}...'")
+        
         return QueryResponse(answer=answer, source_documents=format_docs(docs))
     except Exception as e:
-        logger.exception(f"Error hybrid-rerank query: {e}")
+        logger.exception(f"Error in rerank query: {e}")
         raise HTTPException(500, str(e))
 
-# Add this at the bottom for local testing
+# Entry point
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    # Remove reload=True for production
-    uvicorn.run("main_api:app", host="0.0.0.0", port=port, log_level="info")
+    logger.info(f"Starting server on port {port}")
+    uvicorn.run(
+        "main_api:app",
+        host="0.0.0.0",
+        port=port,
+        log_level="info"
+    )
