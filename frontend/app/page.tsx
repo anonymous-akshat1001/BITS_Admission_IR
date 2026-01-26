@@ -122,7 +122,9 @@ export default function Home() {
               <div className={`rounded-xl px-4 py-3 max-w-[80%] text-sm bg-white shadow`}>
                 <Markdown remarkPlugins={[remarkGfm]}>{m.text}</Markdown>
 
-                {m.type === 'bot' && m.source_documents?.length > 0 && (
+                {m.type === 'bot' &&
+                  m.source_documents &&
+                  m.source_documents.length > 0 && (
                   <Accordion type="single" collapsible className="mt-3">
                     {m.source_documents.map((doc, idx) => (
                       <AccordionItem key={idx} value={`doc-${idx}`}>
