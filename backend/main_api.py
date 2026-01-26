@@ -277,8 +277,12 @@ class QueryResponse(BaseModel):
 
 def initialize_rag():
     """Lazy initialization of heavy RAG components"""
-    if "hybrid_rag_chain" in rag_components:
-        return  # already initialized
+    # if "hybrid_rag_chain" in rag_components:
+    #     return  # already initialized
+
+    if "hybrid_retriever" in rag_components:
+        return
+
 
     logger.info("Lazy RAG initialization started...")
     
@@ -352,6 +356,20 @@ def initialize_rag():
         logger.exception(f"RAG initialization failed: {e}")
         raise HTTPException(500, f"Failed to initialize RAG: {str(e)}")
 
+
+
+rag_initialized = False
+
+def ensure_rag_initialized():
+    global rag_initialized
+    if not rag_initialized:
+        initialize_rag()
+        rag_initialized = True
+
+
+
+
+
 #App Instance
 app = FastAPI(title="Hybrid RAG API", version="1.0.0", lifespan=lifespan)
 
@@ -372,19 +390,16 @@ async def read_root():
     return {"message": "Welcome to Hybrid RAG API", "status": "running"}
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint for monitoring"""
-    return {
-        "status": "healthy",
-        "qdrant_connected": rag_components.get("qdrant_client") is not None,
-        # "rag_initialized": "hybrid_rag_chain" in rag_components
-        "rag_initialized": "hybrid_retriever" in rag_components
-    }
+async def health():
+    return {"status": "ok"}
+
 
 @app.post("/query/hybrid/", response_model=QueryResponse)
 async def query_hybrid(request: QueryRequest):
     # Initialize RAG components on first request
-    initialize_rag()
+    # initialize_rag()
+
+    ensure_rag_initialized()
     
     logger.info(f"Hybrid query: '{request.query[:50]}...'")
     
@@ -403,7 +418,6 @@ async def query_hybrid(request: QueryRequest):
         # answer = chain.invoke(request.query)
         answer = answer_from_docs(docs)
         logger.info(f"Hybrid answer: '{answer[:50]}...'")
-        docs = rag_components["hybrid_retriever"].invoke(request.query)
 
         logger.info(f"Retrieved {len(docs)} documents")
         if docs:
@@ -419,7 +433,11 @@ async def query_hybrid(request: QueryRequest):
 @app.post("/query/hybrid-rerank/", response_model=QueryResponse)
 async def query_hybrid_rerank(request: QueryRequest):
     # Initialize RAG components on first request
-    initialize_rag()
+    # initialize_rag()
+
+
+    ensure_rag_initialized()
+
     
     logger.info(f"Hybrid-rerank query: '{request.query[:50]}...'")
     
