@@ -5,14 +5,18 @@ import pprint
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+
+# from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain.prompts import PromptTemplate
 
-# for reranking
-from langchain.retrievers import ContextualCompressionRetriever
-from langchain.retrievers.document_compressors import CrossEncoderReranker
+
+
+from langchain_classic.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
 from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
 
@@ -21,7 +25,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 QDRANT_URL=os.getenv("QDRANT_URL")
@@ -31,7 +35,7 @@ DENSE_VECTOR_NAME = "dense-vector"
 SPARSE_VECTOR_NAME = "sparse-vector" 
 
 SPARSE_MODEL_NAME = "prithivida/Splade_PP_en_v1" 
-OPENAI_EMBED_MODEL = "text-embedding-ada-002"
+# OPENAI_EMBED_MODEL = "text-embedding-ada-002"
 
 
 RETRIEVER_SEARCH_K = 20 # Number of initial results to retrieve for reranking
@@ -40,21 +44,41 @@ CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2" # Local model
 
 
 # Initialization
-print("Initializing components (rerank version)...")
+# print("Initializing components (rerank version)...")
 qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
 
-dense_embeddings = OpenAIEmbeddings(
-    model=OPENAI_EMBED_MODEL,
-    openai_api_key=OPENAI_API_KEY,
-    disallowed_special=()
+# dense_embeddings = OpenAIEmbeddings(
+#     model=OPENAI_EMBED_MODEL,
+#     openai_api_key=OPENAI_API_KEY,
+#     disallowed_special=()
+# )
+
+# sparse_embeddings = FastEmbedSparse(
+#     model_name=SPARSE_MODEL_NAME
+# )
+
+
+# llm = ChatOpenAI(openai_api_key=OPENAI_API_KEY, model_name="gpt-3.5-turbo")
+
+print("Initializing embeddings (offline)...")
+
+qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60)
+
+dense_embeddings = FastEmbedEmbeddings(
+    model_name="BAAI/bge-small-en-v1.5"
 )
 
 sparse_embeddings = FastEmbedSparse(
     model_name=SPARSE_MODEL_NAME
 )
 
+print("Initializing CrossEncoder reranker...")
+cross_encoder_model = HuggingFaceCrossEncoder(
+    model_name=CROSS_ENCODER_MODEL_NAME
+)
 
-llm = ChatOpenAI(openai_api_key=OPENAI_API_KEY, model_name="gpt-3.5-turbo")
+print("All models initialized.")
+
 
 print(f"Initializing CrossEncoder model via Langchain: {CROSS_ENCODER_MODEL_NAME}...")
 cross_encoder_model = HuggingFaceCrossEncoder(model_name=CROSS_ENCODER_MODEL_NAME)
@@ -121,20 +145,37 @@ Answer:
     print("RAG chain setup complete.")
     return chain
 
-def query_and_print(chain, retriever, question):
-    """
-    Query the RAG chain, retrieve source documents (post-reranking), and print results.
-    """
-    print("\nQuerying (with Reranking)")
+# def query_and_print(chain, retriever, question):
+#     """
+#     Query the RAG chain, retrieve source documents (post-reranking), and print results.
+#     """
+#     print("\nQuerying (with Reranking)")
+#     print(f"Question: {question}")
+
+#     answer = chain.invoke(question)
+#     print(f"\nAnswer:\n{answer}")
+
+#     source_documents = retriever.invoke(question)
+#     print(f"\nSource Documents Retrieved (Top {RERANKER_TOP_N} after Reranking)")
+#     pprint.pprint(source_documents)
+#     print("End of Query")
+
+def query_and_print(retriever, question):
+    print("\nQuerying (Hybrid + Reranking)")
     print(f"Question: {question}")
 
-    answer = chain.invoke(question)
-    print(f"\nAnswer:\n{answer}")
+    docs = retriever.invoke(question)
 
-    source_documents = retriever.invoke(question)
-    print(f"\nSource Documents Retrieved (Top {RERANKER_TOP_N} after Reranking)")
-    pprint.pprint(source_documents)
-    print("End of Query")
+    if not docs:
+        print("\nAnswer:\nI don't know based on the given information.")
+        return
+
+    print("\nAnswer (Top reranked chunk):\n")
+    print(docs[0].page_content)
+
+    print(f"\nSource Documents Retrieved (Top {len(docs)})")
+    pprint.pprint(docs)
+
 
 # Main Execution
 def main():
@@ -149,7 +190,7 @@ def main():
     )
 
     #Setup RAG Chain
-    rag_chain = setup_rag_chain(retriever, llm)
+    # rag_chain = setup_rag_chain(retriever, llm)
     print("RAG System with Reranking Ready")
 
     #Query Loop
@@ -166,7 +207,8 @@ def main():
                 print("Please enter a question.")
                 continue
 
-            query_and_print(rag_chain, retriever, question)
+            # query_and_print(rag_chain, retriever, question)
+            query_and_print(retriever, question)
 
         except EOFError:
             print("\nExiting interactive session.")

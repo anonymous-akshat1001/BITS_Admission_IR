@@ -12,7 +12,10 @@ from qdrant_client import QdrantClient, models
 
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+
+# from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+
 from langchain_core.documents import Document
 
 from fastembed import SparseTextEmbedding
@@ -40,7 +43,7 @@ logging.basicConfig(
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 # Qdrant configuration
@@ -61,23 +64,26 @@ CHUNK_OVERLAP = 150
 TEXT_SPLITTER_SEPARATORS = ["# ", "## ", "### ", "\n\n", "\n", ". ", "! ", "? ", " "]
 
 # Embedding models
-SPARSE_MODEL_NAME = "prithvida/Splade_PP_en_v1"
-OPENAI_EMBED_MODEL = "text-embedding-3-large"
-OPENAI_EMBED_DIMENSIONS = 1536
+SPARSE_MODEL_NAME = "prithivida/Splade_PP_en_v1"
+# OPENAI_EMBED_MODEL = "text-embedding-3-large"
+# OPENAI_EMBED_DIMENSIONS = 1536
+NEW_EMBED_DIMENSIONS=384
 
 #Initialization
 logging.info("Initializing embedding models...")
-dense_embeddings = OpenAIEmbeddings(
-    model=OPENAI_EMBED_MODEL,
-    openai_api_key=OPENAI_API_KEY,
-    disallowed_special=()
+
+dense_embeddings = FastEmbedEmbeddings(
+    model_name="BAAI/bge-small-en-v1.5"
 )
-sparse_embeddings = SparseTextEmbedding( 
+
+sparse_embeddings = SparseTextEmbedding(
     model_name=SPARSE_MODEL_NAME,
-    batch_size=16, 
-    cache_dir="sparse_cache" 
+    batch_size=16,
+    cache_dir="sparse_cache"
 )
+
 logging.info("Embedding models initialized.")
+
 
 #Helper Functions
 
@@ -283,7 +289,7 @@ def ensure_collection_exists(client: QdrantClient):
                 collection_name=COLLECTION_NAME,
                 vectors_config={
                     DENSE_VECTOR_NAME: models.VectorParams(
-                        size=OPENAI_EMBED_DIMENSIONS,
+                        size=NEW_EMBED_DIMENSIONS,
                         distance=models.Distance.COSINE
                     ),
                 },
@@ -351,26 +357,42 @@ def index_documents(client: QdrantClient, docs, processed_file_paths):
         raise 
 
     # Generate Sparse Embeddings
-    sparse_batch_size = 64 
+    # sparse_batch_size = 64 
     sparse_results = []
     num_texts = len(texts)
-    logging.info(f"Generating sparse embeddings for {num_texts} texts in batches of {sparse_batch_size}...")
-    for i in range(0, num_texts, sparse_batch_size):
-        batch_texts = texts[i:min(i + sparse_batch_size, num_texts)]
-        if not batch_texts:
-            continue
-        logging.info(f"Generating sparse embeddings for batch {i//sparse_batch_size + 1}/{(num_texts + sparse_batch_size - 1)//sparse_batch_size} (size {len(batch_texts)}) from index {i}") # Corrected log message slightly
-        try:
+    # logging.info(f"Generating sparse embeddings for {num_texts} texts in batches of {sparse_batch_size}...")
+    logging.info(f"Generating sparse embeddings for {num_texts} texts one at a time...")
+    # for i in range(0, num_texts, sparse_batch_size):
+        # batch_texts = texts[i:min(i + sparse_batch_size, num_texts)]
+        # if not batch_texts:
+        #     continue
+        # logging.info(f"Generating sparse embeddings for batch {i//sparse_batch_size + 1}/{(num_texts + sparse_batch_size - 1)//sparse_batch_size} (size {len(batch_texts)}) from index {i}") # Corrected log message slightly
+        # try:
             
-            batch_sparse_results = list(sparse_embeddings.embed(batch_texts))
-            sparse_results.extend(batch_sparse_results)
+        #     batch_sparse_results = list(sparse_embeddings.embed(batch_texts))
+        #     sparse_results.extend(batch_sparse_results)
+        # except Exception as e:
+        #     logging.error(f"Error generating sparse embeddings for batch starting at index {i}: {e}")
+        #     raise e
+        
+    for i in range(num_texts):  # Changed: iterate through ALL documents
+        text = texts[i:i+1]  # single document
+        try:
+            sparse_result = list(
+                sparse_embeddings.embed(text, batch_size=1)
+            )[0]
+            sparse_results.append(sparse_result)
+            
+            # Log progress every 10 documents
+            if (i + 1) % 10 == 0:
+                logging.info(f"Generated sparse embeddings for {i + 1}/{num_texts} documents")
         except Exception as e:
-            logging.error(f"Error generating sparse embeddings for batch starting at index {i}: {e}")
-            raise e
+            logging.error(f"Sparse embedding failed at index {i}: {e}")
+            sparse_results.append(None)
 
     logging.info(f"Generated {len(dense_vectors)} dense vectors and {len(sparse_results)} sparse vectors.")
 
-    
+
     sparse_vectors_for_qdrant = []
     for doc_embedding in sparse_results: 
         
@@ -413,7 +435,6 @@ def index_documents(client: QdrantClient, docs, processed_file_paths):
 # upsert in qdrant database
     logging.info(f"Upserting {len(points_to_upsert)} points to Qdrant collection '{COLLECTION_NAME}'...")
     try:
-        
         batch_size = 100 
         num_batches = (len(points_to_upsert) + batch_size - 1) // batch_size
         for i in range(0, len(points_to_upsert), batch_size):

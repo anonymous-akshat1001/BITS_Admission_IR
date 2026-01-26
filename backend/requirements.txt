@@ -1,28 +1,35 @@
-# Core Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
+# Core RAG components
+langchain
+langchain-openai
+langchain-qdrant
+langchain-community
+qdrant-client
+fastembed
 
-# LangChain (Python 3.11 compatible)
-langchain==0.1.20
-langchain-openai==0.0.8
-langchain-qdrant==0.1.0
-langchain-community==0.0.38
-langchain-core==0.1.52
+# Required for fastembed (CPU-only ONNX backend)
+onnxruntime
 
-# Embeddings (Python 3.11 compatible versions)
-fastembed==0.3.6
-onnxruntime==1.17.1
+# Reranking
+sentence-transformers
 
-# Reranking - CPU-only PyTorch
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.2.1
-sentence-transformers==2.5.1
+# API + Environment
+fastapi
+uvicorn[standard]
+python-dotenv
+tiktoken
 
+# PDF & DOCX handling
+pymupdf
+pdfplumber
+docx
 
-# Environment
-python-dotenv==1.0.1
-tiktoken==0.6.0
+# Evaluation tools
+requests
+nltk
+rouge-score
+bert-score[torch]
 
-# Utilities
-requests==2.31.0
+# Misc
+pandas
+psutil
+wordcloud
