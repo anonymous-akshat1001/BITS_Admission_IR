@@ -62,6 +62,7 @@ RERANKING_BASE_SEARCH_K = 20
 RERANKER_TOP_N = 3
 
 rag_components = {}
+initialization_complete = False
 
 #Helper Functions 
 
@@ -217,17 +218,16 @@ def recreate_collection(client, collection_name, dense_dim: int):
 async def lifespan(app: FastAPI):
     logger.info("FastAPI startup: Initializing Qdrant client...")
     try:
-        # Only initialize Qdrant client on startup
-        # This is lightweight and won't block
+        # Only initialize Qdrant client on startup - lightweight
         rag_components["qdrant_client"] = QdrantClient(
             url=QDRANT_URL,
             api_key=QDRANT_API_KEY,
             timeout=60
         )
         logger.info("Qdrant client initialized successfully.")
+        logger.info("Heavy model loading will happen on first request (lazy init)")
     except Exception as e:
         logger.exception(f"Qdrant client initialization failed: {e}")
-        # Don't fail startup - allow app to start anyway
         rag_components["qdrant_client"] = None
     
     logger.info("FastAPI startup complete - server is ready to accept requests.")
@@ -385,13 +385,23 @@ app.add_middleware(
 )
 
 # API Endpoints
+@app.on_event("startup")
+async def startup_event():
+    logger.info(f"Server starting on port {os.getenv('PORT', '8000')}")
+
+
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to Hybrid RAG API", "status": "running"}
 
+
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "qdrant_connected": rag_components.get("qdrant_client") is not None,
+        "models_loaded": "hybrid_retriever" in rag_components
+    }
 
 
 @app.post("/query/hybrid/", response_model=QueryResponse)
@@ -465,4 +475,5 @@ async def query_hybrid_rerank(request: QueryRequest):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("main_api:app", host="0.0.0.0", port=port, reload=True)
+    # Remove reload=True for production
+    uvicorn.run("main_api:app", host="0.0.0.0", port=port, log_level="info")

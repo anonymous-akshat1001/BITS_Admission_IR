@@ -21,15 +21,14 @@ tiktoken
 # PDF & DOCX handling
 pymupdf
 pdfplumber
-docx
+python-docx
 
 # Evaluation tools
 requests
 nltk
 rouge-score
-bert-score[torch]
+bert-score
 
 # Misc
 pandas
 psutil
-wordcloud
