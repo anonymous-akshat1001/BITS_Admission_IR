@@ -1,4 +1,7 @@
 import os
+
+os.environ["FASTEMBED_CACHE_PATH"] = "/opt/render/project/.fastembed"
+
 import warnings
 import logging
 import asyncio
@@ -220,7 +223,7 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 60)
     
     # Start loading hybrid retriever in background
-    asyncio.create_task(initialize_hybrid_background())
+    # asyncio.create_task(initialize_hybrid_background())
     
     yield
     
