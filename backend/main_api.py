@@ -2,11 +2,14 @@ import os
 import warnings
 import logging
 import asyncio
+import gc
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
-# Suppress warnings FIRST
+# Aggressive memory optimization
 os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -21,7 +24,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configuration - load early
+# Configuration
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
@@ -37,11 +40,10 @@ HYBRID_RETRIEVER_SEARCH_K = 10
 RERANKING_BASE_SEARCH_K = 20
 RERANKER_TOP_N = 3
 
-# Global state
+# Global state - MINIMAL
 rag_components = {}
-rag_initialized = False
-initialization_in_progress = False
-initialization_error = None
+hybrid_ready = False
+rerank_ready = False
 
 # Pydantic Models
 class QueryRequest(BaseModel):
@@ -67,9 +69,8 @@ class QueryResponse(BaseModel):
     answer: str
     source_documents: List[SourceDocumentResponse]
 
-# Helper function to format documents
+# Helper functions
 def format_docs(docs) -> List[SourceDocumentResponse]:
-    from langchain_core.documents import Document
     formatted = []
     for doc in docs:
         metadata_dict = doc.metadata.copy()
@@ -89,68 +90,34 @@ def answer_from_docs(docs) -> str:
         return "I don't know based on the given information."
     return docs[0].page_content
 
-# Background initialization function
-async def initialize_rag_background():
-    """Initialize RAG components in the background without blocking"""
-    global rag_initialized, initialization_in_progress, initialization_error
+# LAZY initialization - load ONLY what's needed, WHEN it's needed
+def initialize_hybrid_retriever():
+    """Load ONLY hybrid retriever components"""
+    global hybrid_ready
     
-    if rag_initialized or initialization_in_progress:
+    if hybrid_ready:
         return
     
-    initialization_in_progress = True
-    logger.info("=" * 60)
-    logger.info("BACKGROUND INITIALIZATION: Loading heavy models...")
-    logger.info("=" * 60)
+    logger.info("Loading hybrid retriever components...")
     
-    try:
-        # Run the synchronous initialization in a thread pool
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _initialize_rag_sync)
-        
-        rag_initialized = True
-        initialization_error = None
-        logger.info("=" * 60)
-        logger.info("ALL MODELS LOADED SUCCESSFULLY")
-        logger.info("=" * 60)
-        
-    except Exception as e:
-        initialization_error = str(e)
-        logger.exception(f"RAG initialization failed: {e}")
-    finally:
-        initialization_in_progress = False
-
-def _initialize_rag_sync():
-    """Synchronous initialization logic"""
-    if not rag_components.get("qdrant_client"):
-        raise Exception("Qdrant client not available")
-    
-    # Import heavy libraries only when needed
     from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
     from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
-    from langchain_classic.retrievers import ContextualCompressionRetriever
-    from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
-    from langchain_community.cross_encoders import HuggingFaceCrossEncoder
     
-    logger.info("Loading dense embeddings...")
+    # Load embeddings
     rag_components["dense_embeddings"] = FastEmbedEmbeddings(
-        model_name="BAAI/bge-small-en-v1.5"
+        model_name="BAAI/bge-small-en-v1.5",
+        max_length=512
     )
-    logger.info("Dense embeddings loaded")
+    logger.info("✓ Dense embeddings loaded")
+    gc.collect()
     
-    logger.info("Loading sparse embeddings...")
     rag_components["sparse_embeddings"] = FastEmbedSparse(
         model_name=SPARSE_MODEL_NAME
     )
-    logger.info("Sparse embeddings loaded")
+    logger.info("✓ Sparse embeddings loaded")
+    gc.collect()
     
-    logger.info("Loading cross encoder...")
-    rag_components["cross_encoder"] = HuggingFaceCrossEncoder(
-        model_name=CROSS_ENCODER_MODEL_NAME
-    )
-    logger.info("Cross encoder loaded")
-    
-    # Setup hybrid retriever
-    logger.info("Setting up hybrid retriever...")
+    # Setup retriever
     vector_store = QdrantVectorStore(
         client=rag_components["qdrant_client"],
         collection_name=COLLECTION_NAME,
@@ -164,9 +131,36 @@ def _initialize_rag_sync():
         search_kwargs={'k': HYBRID_RETRIEVER_SEARCH_K}
     )
     logger.info("✓ Hybrid retriever ready")
+    gc.collect()
+    
+    hybrid_ready = True
+
+def initialize_reranking_retriever():
+    """Load reranking components - ONLY if hybrid is already loaded"""
+    global rerank_ready
+    
+    if rerank_ready:
+        return
+    
+    # Ensure hybrid components are loaded first
+    if not hybrid_ready:
+        initialize_hybrid_retriever()
+    
+    logger.info("Loading reranking components...")
+    
+    from langchain_qdrant import QdrantVectorStore, RetrievalMode
+    from langchain_classic.retrievers import ContextualCompressionRetriever
+    from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
+    from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+    
+    # Load cross encoder
+    rag_components["cross_encoder"] = HuggingFaceCrossEncoder(
+        model_name=CROSS_ENCODER_MODEL_NAME
+    )
+    logger.info("✓ Cross encoder loaded")
+    gc.collect()
     
     # Setup reranking retriever
-    logger.info("Setting up reranking retriever...")
     vector_store_rerank = QdrantVectorStore(
         client=rag_components["qdrant_client"],
         collection_name=COLLECTION_NAME,
@@ -187,17 +181,29 @@ def _initialize_rag_sync():
         base_retriever=base_retriever,
         base_compressor=reranker
     )
-    logger.info("Reranking retriever ready")
+    logger.info("✓ Reranking retriever ready")
+    gc.collect()
+    
+    rerank_ready = True
 
-# FastAPI Lifespan - Start background initialization
+# Background initialization for hybrid only
+async def initialize_hybrid_background():
+    """Initialize hybrid retriever in background"""
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, initialize_hybrid_retriever)
+        logger.info("✓✓✓ HYBRID RETRIEVER READY ✓✓✓")
+    except Exception as e:
+        logger.exception(f"Hybrid initialization failed: {e}")
+
+# FastAPI Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=" * 60)
-    logger.info("FastAPI startup initiated")
-    logger.info(f"PORT environment variable: {os.getenv('PORT', 'NOT SET')}")
+    logger.info("FastAPI startup - MINIMAL MEMORY MODE")
     logger.info("=" * 60)
     
-    # Initialize Qdrant client
+    # Initialize ONLY Qdrant client
     try:
         from qdrant_client import QdrantClient
         rag_components["qdrant_client"] = QdrantClient(
@@ -205,16 +211,16 @@ async def lifespan(app: FastAPI):
             api_key=QDRANT_API_KEY,
             timeout=60
         )
-        logger.info("Qdrant client initialized")
+        logger.info("✓ Qdrant client initialized")
     except Exception as e:
         logger.error(f"✗ Qdrant client failed: {e}")
         rag_components["qdrant_client"] = None
     
-    logger.info("Server ready - starting background model loading...")
+    logger.info("✓ Server ready - models load on first query")
     logger.info("=" * 60)
     
-    # Start background initialization WITHOUT waiting for it
-    asyncio.create_task(initialize_rag_background())
+    # Start loading hybrid retriever in background
+    asyncio.create_task(initialize_hybrid_background())
     
     yield
     
@@ -223,8 +229,8 @@ async def lifespan(app: FastAPI):
 
 # Create app instance
 app = FastAPI(
-    title="Hybrid RAG API",
-    version="1.0.0",
+    title="Hybrid RAG API - Memory Optimized",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -241,10 +247,11 @@ app.add_middleware(
 @app.get("/")
 async def read_root():
     return {
-        "message": "Hybrid RAG API is running",
+        "message": "Hybrid RAG API - Memory Optimized",
         "status": "online",
-        "models_loaded": rag_initialized,
-        "initialization_in_progress": initialization_in_progress
+        "hybrid_ready": hybrid_ready,
+        "rerank_ready": rerank_ready,
+        "memory_mode": "ultra-low"
     }
 
 @app.get("/health")
@@ -252,26 +259,25 @@ async def health():
     return {
         "status": "ok",
         "qdrant_connected": rag_components.get("qdrant_client") is not None,
-        "models_loaded": rag_initialized,
-        "initialization_in_progress": initialization_in_progress,
-        "initialization_error": initialization_error
+        "hybrid_ready": hybrid_ready,
+        "rerank_ready": rerank_ready
     }
 
 @app.post("/query/hybrid/", response_model=QueryResponse)
 async def query_hybrid(request: QueryRequest):
-    # Check if models are ready
-    if not rag_initialized:
-        if initialization_error:
-            raise HTTPException(500, f"Model initialization failed: {initialization_error}")
-        raise HTTPException(503, "Models are still loading. Please try again in a moment.")
+    # Lazy load if not ready
+    if not hybrid_ready:
+        logger.info("First hybrid query - initializing components...")
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, initialize_hybrid_retriever)
+        except Exception as e:
+            logger.exception(f"Failed to initialize hybrid retriever: {e}")
+            raise HTTPException(500, f"Initialization failed: {str(e)}")
     
     logger.info(f"Hybrid query: '{request.query[:50]}...'")
     
-    if "hybrid_retriever" not in rag_components:
-        raise HTTPException(503, "Retriever not initialized")
-    
     try:
-        # Run retrieval in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
         docs = await loop.run_in_executor(
             None, 
@@ -279,7 +285,7 @@ async def query_hybrid(request: QueryRequest):
             request.query
         )
         answer = answer_from_docs(docs)
-        logger.info(f"Answer generated: '{answer[:50]}...'")
+        logger.info(f"Answer: '{answer[:50]}...'")
         
         return QueryResponse(answer=answer, source_documents=format_docs(docs))
     except Exception as e:
@@ -288,19 +294,19 @@ async def query_hybrid(request: QueryRequest):
 
 @app.post("/query/hybrid-rerank/", response_model=QueryResponse)
 async def query_hybrid_rerank(request: QueryRequest):
-    # Check if models are ready
-    if not rag_initialized:
-        if initialization_error:
-            raise HTTPException(500, f"Model initialization failed: {initialization_error}")
-        raise HTTPException(503, "Models are still loading. Please try again in a moment.")
+    # Lazy load if not ready
+    if not rerank_ready:
+        logger.info("First rerank query - initializing components...")
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, initialize_reranking_retriever)
+        except Exception as e:
+            logger.exception(f"Failed to initialize reranking retriever: {e}")
+            raise HTTPException(500, f"Initialization failed: {str(e)}")
     
     logger.info(f"Hybrid-rerank query: '{request.query[:50]}...'")
     
-    if "reranking_retriever" not in rag_components:
-        raise HTTPException(503, "Reranking retriever not initialized")
-    
     try:
-        # Run retrieval in thread pool to avoid blocking
         loop = asyncio.get_event_loop()
         docs = await loop.run_in_executor(
             None,
