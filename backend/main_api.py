@@ -23,6 +23,8 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 load_dotenv()
 
+from google import genai
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -42,6 +44,27 @@ CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 HYBRID_RETRIEVER_SEARCH_K = 10
 RERANKING_BASE_SEARCH_K = 20
 RERANKER_TOP_N = 3
+
+# Gemini setup
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+GEMINI_MODEL = "gemini-2.5-flash"
+
+GEMINI_SYSTEM_PROMPT = """You are a helpful and accurate Q&A assistant for BITS Pilani admissions.
+Your ONLY job is to answer questions strictly based on the context provided below.
+
+Rules you MUST follow:
+1. Answer ONLY from the provided context. Do not use any external knowledge.
+2. If the question is about a topic NOT covered in the context (e.g., other colleges, general knowledge, unrelated topics), respond with: "I'm sorry, I can only answer questions related to BITS Pilani admissions based on official information."
+3. Do not guess, infer, or hallucinate. If the context doesn't have enough information, say: "I don't have enough information in my knowledge base to answer this accurately."
+4. Be concise, clear, and helpful.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
 
 # Global state - MINIMAL
 rag_components = {}
@@ -88,10 +111,19 @@ def format_docs(docs) -> List[SourceDocumentResponse]:
         )
     return formatted
 
-def answer_from_docs(docs) -> str:
+def answer_from_docs(docs, question: str) -> str:
     if not docs:
-        return "I don't know based on the given information."
-    return docs[0].page_content
+        return "I don't have enough information in my knowledge base to answer this accurately."
+
+    context = "\n\n---\n\n".join([doc.page_content for doc in docs])
+    prompt = GEMINI_SYSTEM_PROMPT.format(context=context, question=question)
+
+    try:
+        response = gemini_client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"Gemini API error: {e}")
+        return "An error occurred while generating the answer."
 
 # LAZY initialization - load ONLY what's needed, WHEN it's needed
 def initialize_hybrid_retriever():
@@ -111,13 +143,13 @@ def initialize_hybrid_retriever():
         model_name="BAAI/bge-small-en-v1.5",
         max_length=512
     )
-    logger.info("✓ Dense embeddings loaded")
+    logger.info("Dense embeddings loaded")
     gc.collect()
     
     rag_components["sparse_embeddings"] = FastEmbedSparse(
         model_name=SPARSE_MODEL_NAME
     )
-    logger.info("✓ Sparse embeddings loaded")
+    logger.info("Sparse embeddings loaded")
     gc.collect()
     
     # Setup retriever
@@ -133,7 +165,7 @@ def initialize_hybrid_retriever():
     rag_components["hybrid_retriever"] = vector_store.as_retriever(
         search_kwargs={'k': HYBRID_RETRIEVER_SEARCH_K}
     )
-    logger.info("✓ Hybrid retriever ready")
+    logger.info("Hybrid retriever ready")
     gc.collect()
     
     hybrid_ready = True
@@ -160,7 +192,7 @@ def initialize_reranking_retriever():
     rag_components["cross_encoder"] = HuggingFaceCrossEncoder(
         model_name=CROSS_ENCODER_MODEL_NAME
     )
-    logger.info("✓ Cross encoder loaded")
+    logger.info("Cross encoder loaded")
     gc.collect()
     
     # Setup reranking retriever
@@ -184,7 +216,7 @@ def initialize_reranking_retriever():
         base_retriever=base_retriever,
         base_compressor=reranker
     )
-    logger.info("✓ Reranking retriever ready")
+    logger.info("Reranking retriever ready")
     gc.collect()
     
     rerank_ready = True
@@ -195,7 +227,7 @@ async def initialize_hybrid_background():
     try:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, initialize_hybrid_retriever)
-        logger.info("✓✓✓ HYBRID RETRIEVER READY ✓✓✓")
+        logger.info("HYBRID RETRIEVER READY")
     except Exception as e:
         logger.exception(f"Hybrid initialization failed: {e}")
 
@@ -214,12 +246,12 @@ async def lifespan(app: FastAPI):
             api_key=QDRANT_API_KEY,
             timeout=60
         )
-        logger.info("✓ Qdrant client initialized")
+        logger.info("Qdrant client initialized")
     except Exception as e:
-        logger.error(f"✗ Qdrant client failed: {e}")
+        logger.error(f"Qdrant client failed: {e}")
         rag_components["qdrant_client"] = None
     
-    logger.info("✓ Server ready - models load on first query")
+    logger.info("Server ready - models load on first query")
     logger.info("=" * 60)
     
     # Start loading hybrid retriever in background
@@ -287,7 +319,7 @@ async def query_hybrid(request: QueryRequest):
             rag_components["hybrid_retriever"].invoke, 
             request.query
         )
-        answer = answer_from_docs(docs)
+        answer = answer_from_docs(docs, request.query)
         logger.info(f"Answer: '{answer[:50]}...'")
         
         return QueryResponse(answer=answer, source_documents=format_docs(docs))
@@ -316,7 +348,7 @@ async def query_hybrid_rerank(request: QueryRequest):
             rag_components["reranking_retriever"].invoke,
             request.query
         )
-        answer = answer_from_docs(docs)
+        answer = answer_from_docs(docs, request.query)
         logger.info(f"Reranked answer: '{answer[:50]}...'")
         
         return QueryResponse(answer=answer, source_documents=format_docs(docs))

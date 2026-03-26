@@ -1,14 +1,20 @@
-
-
 import os, argparse, time, logging, traceback, warnings, requests, pandas as pd, psutil, threading, queue, nltk
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 from rouge_score import rouge_scorer
 from bert_score import score as calculate_bertscore_hf
 
+
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+
 #Config
-DATASET_PATH = "c:\\Users\\Admin\\Desktop\\4-2\\IR folder\\CS_F469_Information_retreival_Project\\IR_test_dataset.csv"
-API_BASE_URL = "http://127.0.0.1:8000"
-REQUEST_TIMEOUT = 120
+DATASET_PATH = os.getenv("DATASET_PATH")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", 120))
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

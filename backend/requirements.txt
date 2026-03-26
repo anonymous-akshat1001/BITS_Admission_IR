@@ -32,3 +32,6 @@ bert-score
 # Misc
 pandas
 psutil
+
+# Gemini LLM
+google-genai

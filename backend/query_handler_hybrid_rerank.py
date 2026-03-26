@@ -1,35 +1,26 @@
-
 import os
 import warnings
 import pprint
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from langchain_qdrant import QdrantVectorStore, RetrievalMode, FastEmbedSparse
-
-# from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
-
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from langchain.prompts import PromptTemplate
-
-
-
 from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
 from langchain_community.cross_encoders import HuggingFaceCrossEncoder
-
+from google import genai
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 load_dotenv()
 
-# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+GEMINI_MODEL = "gemini-2.5-flash"
 
-
-QDRANT_URL=os.getenv("QDRANT_URL")
-QDRANT_API_KEY=os.getenv("QDRANT_API_KEY")
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = "hybrid_corpus_v1"
 DENSE_VECTOR_NAME = "dense-vector" 
 SPARSE_VECTOR_NAME = "sparse-vector" 
@@ -121,57 +112,47 @@ def setup_reranking_retriever(client, collection_name, dense_embed_model, sparse
     print("Contextual Compression Retriever setup complete.")
     return compression_retriever
 
-def setup_rag_chain(retriever, llm):
-    """
-    Set up the RAG chain using the provided retriever (which will be the compression retriever).
-    """
-    print("Setting up RAG chain...")
-    template = """ You are a kind and helpful QnA assistant. Your job is to assist Faculty and students of BITS Pilani in resolving their doubts and queries based SOLELY on the provided context. If the context doesn't contain the answer, say you don't know.
+GEMINI_SYSTEM_PROMPT = """You are a helpful and accurate Q&A assistant for BITS Pilani admissions.
+Your ONLY job is to answer questions strictly based on the context provided below.
+
+Rules you MUST follow:
+1. Answer ONLY from the provided context. Do not use any external knowledge.
+2. If the question is about a topic NOT covered in the context (e.g., other colleges, general knowledge, unrelated topics), respond with: "I'm sorry, I can only answer questions related to BITS Pilani admissions based on official information."
+3. Do not guess, infer, or hallucinate. If the context doesn't have enough information, say: "I don't have enough information in my knowledge base to answer this accurately."
+4. Be concise, clear, and helpful.
+
 Context:
 {context}
 
 Question: {question}
 
-Answer:
-    """
-    prompt = PromptTemplate.from_template(template)
+Answer:"""
 
-    chain = (
-        {"context": retriever, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-    print("RAG chain setup complete.")
-    return chain
 
-# def query_and_print(chain, retriever, question):
-#     """
-#     Query the RAG chain, retrieve source documents (post-reranking), and print results.
-#     """
-#     print("\nQuerying (with Reranking)")
-#     print(f"Question: {question}")
+def answer_with_gemini(docs, question):
+    """Generate an answer using Gemini based on retrieved docs."""
+    if not docs:
+        return "I don't have enough information in my knowledge base to answer this accurately."
 
-#     answer = chain.invoke(question)
-#     print(f"\nAnswer:\n{answer}")
+    context = "\n\n---\n\n".join([doc.page_content for doc in docs])
+    prompt = GEMINI_SYSTEM_PROMPT.format(context=context, question=question)
 
-#     source_documents = retriever.invoke(question)
-#     print(f"\nSource Documents Retrieved (Top {RERANKER_TOP_N} after Reranking)")
-#     pprint.pprint(source_documents)
-#     print("End of Query")
+    try:
+        response = gemini_client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini API error: {e}")
+        return "An error occurred while generating the answer."
+
 
 def query_and_print(retriever, question):
-    print("\nQuerying (Hybrid + Reranking)")
+    print("\nQuerying (Hybrid + Reranking + Gemini)")
     print(f"Question: {question}")
 
     docs = retriever.invoke(question)
 
-    if not docs:
-        print("\nAnswer:\nI don't know based on the given information.")
-        return
-
-    print("\nAnswer (Top reranked chunk):\n")
-    print(docs[0].page_content)
+    answer = answer_with_gemini(docs, question)
+    print(f"\nAnswer:\n{answer}")
 
     print(f"\nSource Documents Retrieved (Top {len(docs)})")
     pprint.pprint(docs)
