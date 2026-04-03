@@ -11,6 +11,7 @@ from qdrant_client import QdrantClient, models
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
+import time
 
 # Load environment variables
 load_dotenv()
@@ -124,7 +125,7 @@ def extract_text_from_html(html_content, url):
 def load_pdf(url, temp_dir):
     """Download and load a PDF file."""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, verify=False, timeout=30)
         response.raise_for_status()
 
@@ -149,9 +150,10 @@ def load_html_with_playwright(url):
     """Use Playwright to render JS and extract full page text."""
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(headless=True, args=['--ignore-certificate-errors'])
+            context = browser.new_context(ignore_https_errors=True)
             page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.goto(url, wait_until="networkidle", timeout=60000)
             # Wait a bit extra for any lazy-loaded content
             page.wait_for_timeout(2000)
             html_content = page.content()
@@ -220,6 +222,7 @@ def ingest_urls():
         for i, url in enumerate(URLS, 1):
             print(f"\n[{i}/{len(URLS)}] {url[:80]}...")
             docs = download_and_load(url, temp_dir)
+            time.sleep(10)
             if docs:
                 all_documents.extend(docs)
                 print(f"  -> Added {len(docs)} document(s). Total so far: {len(all_documents)}")
@@ -276,7 +279,8 @@ def ingest_urls():
         retrieval_mode=RetrievalMode.HYBRID,
         vector_name="dense-vector",
         sparse_vector_name="sparse-vector",
-        force_recreate=True
+        force_recreate=True,
+        batch_size=16
     )
 
     print("\nIngestion completed successfully!")
