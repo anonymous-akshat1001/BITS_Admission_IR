@@ -1,307 +1,211 @@
-# Information Retrieval Project
+# BITS Research Regulations Search
 
-## Search and Answering system over BITS Pilani research regulations and policies.
+A local, explainable information-retrieval project for searching the 52 bundled BITS Pilani PhD and research-policy PDFs. It returns focused answers, page-level evidence, transparent ranking scores, and an explicit “not enough evidence” response when the corpus cannot support an answer.
 
-## Table of Contents
-- [1. Problem](#1-problem)
-- [2. How We Try to Solve It](#2-how-we-try-to-solve-it)
-- [3. How It Works](#3-how-it-works)
-  - [3.1 Overview of Pipeline](#31-overview-of-whole-pipeline)
-  - [3.2 Corpus Collection](#32-corpus-collection)
-  - [3.3 Data Processing](#33-data-processing-and-text-cleaning)
-  - [3.4 Chunking](#34-chunking)
-  - [3.5 Indexing](#35-indexing)
-  - [3.6 Retrieval](#36-retrieval)
-  - [3.7 Reranking](#37-reranking)
-  - [3.8 Answer Generation](#38-answer-generation)
-- [4. Local Setup](#4-local-setup-and-environment-configuration)
-  - [Initial Setup](#initial-repository-setup)
-  - [Backend Setup](#backend-setup)
-  - [Frontend Setup](#frontend-setup)
-- [5. Code Structure](#5-code-structure-and-flow)
-- [6. Evaluation Metrics](#6-evaluation-metrics)
-- [7. Contribution Guide](#7-contribution-guide)
-- [8. Acknowledgements](#8-acknowledgements)
+The improved system runs without Qdrant, paid APIs, model downloads, or an internet connection after installation. A Gemini model can optionally rewrite retrieved evidence into a concise answer, but the deterministic extractive answerer is the default and fallback.
 
-## 1. Problem
+## Measured result
 
-Academic institutions like BITS Pilani maintain extensive research regulations and guidelines distributed across multiple PDF documents. This creates several critical challenges:
+The diagnostic set contains 40 corpus-supported questions, four audited source-gap questions, and 18 deliberately unsupported questions (including eight hard negatives and six adversarial paraphrases that reuse domain vocabulary). The current deterministic evaluation produced:
 
-- **Information Fragmentation**: Research guidelines are scattered across multiple documents, making it difficult to find specific information quickly
-- **Manual Search Overhead**: Significant time is wasted manually searching through lengthy documents
-- **Lack of Explainability**: Need for answers with clear source attribution for verification
-- **Accessibility Barrier**: Documents are not easily searchable or accessible in a user-friendly format
+| Metric | Legacy-style TF-IDF proxy | Improved system |
+| --- | ---: | ---: |
+| Document Hit@1 | 79.5% | **100.0%** |
+| Document Hit@3 | 90.9% | **100.0%** |
+| MRR@10 | 0.854 | **1.000** |
+| nDCG@5 | 0.853 | **0.982** |
+| Supported answer token-F1 | 0.215 | **0.381** |
+| Supported answer ROUGE-L | 0.181 | **0.320** |
+| Audited source-gap abstention | 0.0% | **100.0%** |
+| Out-of-scope abstention | 0.0% | **100.0%** |
+| Post-warm-up median latency | **0.21 ms** | 9.96 ms |
+| Runtime failures | 0 | 0 |
 
-## 2. How We Try to Solve It
+These are in-sample diagnostic results on the small dataset used while tuning the rules, not a held-out or external estimate of generalization. The legacy number is a reproducible proxy because the original Qdrant index, credentials, and saved outputs were not committed. It preserves the old lossy preprocessing, 600-character chunks, and top-chunk answer behavior, but uses local unigram TF-IDF in place of the unavailable cloud/vector services.
 
-Our solution implements a Search and Answering system specifically designed for BITS research regulations over 100's of documents using:
+Four reference answers (Q06, Q17, Q36, and Q44) contain policy details that are not fully present in the supplied PDFs. The improved system reports all four gaps instead of inventing answers and does not abstain on the 40 supported diagnostic questions. See [the evaluation report](artifacts/evaluation/summary.md) and [evaluation methodology](docs/EVALUATION.md).
 
-1. **Document Processing Pipeline**: Automated system to process and structure official BITS PDF documents
-2. **Hybrid Search Architecture**: Combines semantic understanding with keyword matching(sparse embeddings) for accurate retrieval
-3. **RAG (Retrieval Augmented Generation)**: Uses large language models (LLM's) to generate natural, contextual answers
-4. **Source Attribution**: Every answer includes links to source documents for verification
-5. **User-Friendly Interface**: Clean, modern web interface for asking questions and viewing answers
+## What the project does
 
-## 3. How It Works
+The corpus covers research proposals, DRC/DAC procedures, qualifying examinations, fellowships, travel grants, sponsored-project rules, thesis submission, and related forms. It is not a general BITS admissions or campus-information search engine.
 
-### 3.1 Overview of Whole Pipeline
-
-The system operates through three main stages:
-
-1. **Document Processing**: PDF ingestion → Text extraction → Cleaning → Chunking → Embedding generation → Indexing and storage.
-2. **Information Retrieval**: Query processing → Hybrid search (dense + sparse retrieval) → Reranking → Context selection
-3. **Answer Generation**: Context merging → Answer generation using LLM (ex: gpt-4-turbo) → Source attribution → Response formatting
-
-### 3.2 Corpus Collection
-
-- **Document Sources**:
-  -  Official BITS Pilani Website.(AGSRD, PhD guidelines etc.)
-
-- **Collection Process**:
-  - Automated PDF downloading from official sources
-  - Document validation and metadata extraction
-
-### 3.3 Data Processing and Text Cleaning
-
-- **Text Extraction**:
-  - PyMuPDF for robust PDF parsing
-  - Table and figure handling
-  - Layout preservation where relevant
-
-- **Cleaning Pipeline**:
-  - Unicode normalization
-  - Special character handling
-  - Whitespace normalization
-  - Header/footer removal
-  - Bullet point standardization
-
-### 3.4 Chunking
-
-- **Chunk Creation**:
-  - Recursive text splitter for creating chunk of text from documents.
-  - Overlap handling for context preservation (Chunk overlap)
-
-- **Metadata**:
-  - Document name
-  - Page numbers
-  - Document source/link (later to be used as reference in final generated answer).
-
-### 3.5 Indexing
-
-#### Dense Embeddings
-- **Model**: OpenAI's text-embedding-3-large
-- **Vector Size**: 1536 dimensions
-- **Purpose**: Capture semantic meaning and contextual understanding
-- **Similarity Metric**: Cosine similarity between query and document vectors
-
-
-#### Sparse Embeddings
-- **Model**: SPLADE++ (prithvida/Splade_PP_en_v1) - from Huggingface
-- **Vector Type**: High-dimensional sparse vectors.
-- **Purpose**: Exact term matching and vocabulary expansion
-
-
-### 3.6 Retrieval
-
-1. **Query Processing**:
-   - Query analysis and preprocessing
-   - Dense and sparse embedding generation
-
-2. **Hybrid Search**:
-   - Parallel dense and sparse vector search
-   - Score fusion using Reciprocal Rank Fusion
-   - Initial candidate set generation (top-k)
-
-
-### 3.7 Reranking
-
-- **Model**: Cross-encoder reranking (ms-marco-MiniLM-L-6-v2)
-
-
-### 3.8 Answer Generation
-
-1. **Context Processing**:
-   - Merging relevant chunks
-
-2. **LLM Integration**:
-   - LLM model integration like gpt-4-turbo
-   - Custom System prompt to guide LLM for generating answers based on relevant retrieved context.
-
-3. **Response Formatting**:
-   - Answer structuring
-   - Source attribution addition
-   - Error handling
-
-## 4. Local Setup and Environment Configuration
-
-### Initial Repository Setup
-1. Fork the repository:
-   ```bash
-   # Visit https://github.com/HarshJ23/CS_F469_Information_retreival_Project
-   # Click on 'Fork' button at top-right
-   ```
-
-2. Clone your forked repository:
-   ```bash
-   git clone https://github.com/YOUR-USERNAME/CS_F469_Information_retreival_Project.git
-   cd CS_F469_Information_retreival_Project
-   ```
-
-### Backend Setup
-
-1. **Python Environment**:
-```bash
-python -m venv venv
-.\venv\Scripts\activate  # Windows
-pip install -r requirements.txt
+```text
+52 PDFs
+   ↓ page-aware extraction + reviewed OCR sidecars + table recovery
+Unicode-safe cleaning, structure retention, domain normalization
+   ↓
+Page-bounded chunks with title, section, page, and stable source metadata
+   ↓
+BM25 + TF-IDF + phrase + proximity + title/scope signals
+   ↓ diversity and overlap filtering
+Focused extractive answer / safe abstention / optional grounded Gemini
+   ↓
+CLI, FastAPI, and Next.js evidence interface
 ```
 
-2. **OpenAI API Setup**:
-   1. Create an account on [OpenAI Platform](https://platform.openai.com/docs/overview)
-   2. Navigate to API Keys section
-   3. Click 'Create new secret key'
-   4. Copy the generated API key
-   5. Add to `.env` file:
-      ```bash
-      OPENAI_API_KEY=your_key_here
-      ```
+### Retrieval pipeline
 
-3. **Qdrant Setup**:
-   1. Create an account on [Qdrant Cloud](https://cloud.qdrant.io/)
-   2. Click 'Create cluster' and select free tier
-   3. After cluster creation, a dialog will appear with credentials
-   4. Copy the API key from the dialog
-   5. For the URL:
-      - Extract your cluster ID from the URL (e.g., if your URL is `https://cloud.qdrant.io/accounts/<cluster-id-string>/get-started`)
-      - Format the Qdrant URL as: `https://<your-cluster-id>.eu-west-2-0.aws.cloud.qdrant.io:6333`
-   6. Add to `.env` file:
-      ```bash
-      QDRANT_URL=https://<your-cluster-id>.eu-west-2-0.aws.cloud.qdrant.io:6333
-      QDRANT_API_KEY=your_qdrant_api_key
-      ```
+1. **Corpus loading:** PyMuPDF extracts all 52 PDFs and 171 pages. Repeated headers and footers, page numbers, broken hyphenation, and excess whitespace are cleaned without removing useful Unicode such as `₹`, bullets, or comparison symbols.
+2. **Scanned documents:** two image-only policy PDFs use bundled, checksum-verified OCR sidecars that were visually checked against rendered pages. Every corpus document is searchable without requiring Tesseract at runtime.
+3. **Chunking:** content is split within page boundaries at roughly 900 characters with 140 characters of overlap. Each chunk keeps its document title, section, page number, filename, and stable ID.
+4. **Query processing:** phrases and notations such as “Ph.D.”, “full-time,” “T.A./D.A.,” “TA-DA,” Professional Development Fund, DRC, and DAC are normalized. Stopwords are removed, a conservative stemmer handles common variants, and a small transparent domain expansion map adds low-weight synonyms.
+5. **Ranking:** normalized BM25 and TF-IDF scores are combined with phrase, proximity, title, and query-coverage signals. Scope checks distinguish easily confused policies such as national versus international travel, self-sponsored versus Institute fellowship, and proposal versus thesis documents.
+6. **Result filtering:** near-duplicate chunks are suppressed and each document is limited to two results before fallback filling, so overlapping pages from one PDF do not dominate the list.
+7. **Answering:** relevant sentences are selected and cited. Numeric/unit and explicit-identifier evidence improve answers for amounts, durations, percentages, counts, and acronyms; structured-table handlers preserve conditional PDF/DDF/CDF allocations and the interleaved CS/IS sub-area table. Full-corpus scope checks, direct-evidence checks, and audited source-gap rules refuse unsupported questions.
 
-4. **Database Setup**:
+The method is deliberately understandable for a college IR project. It has no hidden training stage; the API returns the main additive score components, query matches, and final score for inspection.
+
+## Quick start
+
+Requirements:
+
+- Python 3.11 recommended
+- Node.js 18.17 or newer for the web interface
+
+From the repository root:
+
 ```bash
-# Initialize Qdrant collection
-python document_processing_hybrid.py
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements-dev.txt
 ```
 
-5. **Start Server**:
+Inspect the corpus, run a query, and execute the tests:
+
 ```bash
-uvicorn main_api:app --reload --port 8000
+make inspect
+make search QUERY="What is the international travel award limit?"
+make test
 ```
 
-### Frontend Setup
+Start the API:
 
-1. **Node.js Environment**:
+```bash
+make api
+```
+
+The API is available at `http://localhost:8000`, with interactive documentation at `http://localhost:8000/docs`. The first query builds the in-memory index and normally takes a few seconds; later queries are much faster.
+
+In a second terminal, start the frontend:
+
 ```bash
 cd frontend
 npm install
-```
-
-2. **Environment Variables**:
-```bash
-# Create .env.local in frontend directory
-NEXT_PUBLIC_API_URL=http://localhost:8000
-```
-
-3. **Development Server**:
-```bash
+cp .env.local.example .env.local
 npm run dev
 ```
 
-## 5. Code Structure and Flow
+Open `http://localhost:3000`. The interface shows answer confidence, warnings, processing time, matched terms, ranked evidence excerpts, and links to the cited PDF page.
 
+Windows users can run the equivalent module commands after activating `.venv\Scripts\activate`; the Make targets use Unix-style virtual-environment paths.
+
+## CLI and API usage
+
+Direct CLI query:
+
+```bash
+.venv/bin/python -m backend.scripts.search \
+  "How many credits are prescribed for a PhD student with a first degree?" \
+  --top-k 5
 ```
-CS_F469_Information_retreival_Project/
+
+API query:
+
+```bash
+curl -X POST http://localhost:8000/query/ \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"What is the maximum National Travel Grant?","top_k":5,"answer_mode":"extractive"}'
+```
+
+`answer_mode` can be:
+
+- `extractive`: deterministic local answer, requiring no key or network;
+- `auto`: use Gemini when configured, otherwise use extractive mode;
+- `gemini`: request Gemini and fall back safely if it is unavailable.
+
+Every response includes the answer, confidence level, abstention state, citation ranks, retrieval method, processing time, warnings, and source records containing page numbers, excerpts, matched terms, component scores, and safe local PDF URLs. Older `/query/hybrid/` and `/query/hybrid-rerank/` clients remain compatible but now use the same improved service.
+
+## Optional Gemini generation
+
+The project does not need an LLM. If a Gemini API key and suitable quota are available, copy the example environment file and configure a model:
+
+```bash
+cp .env.example .env
+# Edit GEMINI_API_KEY and, if needed, GEMINI_MODEL.
+```
+
+The default is `gemini-2.5-flash`. Any model name available to the configured Gemini account can be used. The prompt restricts generation to retrieved passages, requests a structured `answered`/`not_found` status and citations, preserves amounts and conditions, and treats source text as untrusted data. Invalid JSON, citation structures, status contradictions, or numeric claims absent from cited text fail closed instead of displaying an unverified generated answer; network/provider failures still use the local extractive fallback. Provider free-tier availability and quotas can change, so local extractive mode remains the fully free default.
+
+## Evaluation
+
+Run the complete comparison:
+
+```bash
+make evaluate
+```
+
+Inputs:
+
+- `data/evaluation/queries.csv` — 44 stable IDs, questions, and reference answers;
+- `data/evaluation/qrels.csv` — binary document-level relevance judgments;
+- `data/evaluation/source_gaps.csv` — four manually audited missing-evidence labels;
+- `data/evaluation/unanswerable.csv` — 18 unsupported questions across simple, hard-negative, and adversarial-paraphrase categories.
+
+Outputs are regenerated in `artifacts/evaluation/`:
+
+- `summary.md` — presentation-ready overall and category tables;
+- `summary.json` — complete machine-readable results and corpus diagnostics;
+- `per_query.csv` — query-by-query answers, rankings, metrics, latency, errors, and abstentions.
+
+Retrieval is evaluated with Hit@1/3/5, MRR@10, and nDCG@5. Qrels for the four source gaps identify only the closest topical document, so those hits are not claims that the missing answer was retrieved. Token-F1 and ROUGE-L are averaged over the 40 supported questions; source-gap and out-of-scope abstention are reported separately. Failures remain in the denominator with a score of zero. Text overlap does not establish factual correctness, so the detailed CSV and cited pages should also be inspected.
+
+## Project structure
+
+```text
+BITS_Admission_IR/
 ├── backend/
-│   ├── main_api.py                    # FastAPI application
-│   ├── document_processing_hybrid.py   # Document processing
-│   ├── query_handler_hybrid.py        # Query processing
-│   ├── query_handler_hybrid_rerank.py # Reranking logic
-│   └── evaluate_api.py                # Evaluation scripts
-├── frontend/
-│   ├── app/                           # Next.js pages
-│   ├── components/                    # React components
-│   └── public/                        # Static assets
-└── docs/                              # Documentation
+│   ├── api.py                  # FastAPI routes and response schema
+│   ├── main_api.py             # Environment-aware API entry point
+│   ├── ir_system/              # ingestion, preprocessing, ranking, answers
+│   ├── scripts/                # search, corpus inspection, OCR, evaluation
+│   └── tests/                  # unit, API, and corpus integration tests
+├── data/
+│   ├── evaluation/             # queries, qrels, unanswerable cases
+│   └── ocr/                    # reviewed, checksum-bound OCR sidecars
+├── document_corpus/            # 52 source PDFs
+├── frontend/                   # Next.js evidence-search interface
+├── artifacts/evaluation/       # reproducible benchmark outputs
+├── docs/
+│   ├── PROJECT_AUDIT.md        # documented original implementation
+│   └── EVALUATION.md           # metric definitions and caveats
+├── .env.example
+└── Makefile
 ```
 
-**Data Flow**:
-1. User submits question → Frontend
-2. Frontend sends API request → Backend
-3. Backend processes query:
-   - Generates embeddings
-   - Performs hybrid search
-   - Reranks results
-   - Generates answer
-4. Response returned → Frontend
-5. Frontend renders formatted answer
+## Old behavior versus improved behavior
 
-## 6. Evaluation Metrics
+| Area | Original repository | Improved repository |
+| --- | --- | --- |
+| Runtime | Qdrant/cloud credentials and several model downloads required | Small in-memory CPU index; no service or model download |
+| Preprocessing | Lowercased ASCII with page structure removed | Unicode-safe, page-aware, header/footer cleanup, headings and lists retained |
+| Scans and tables | No working OCR or table recovery | Reviewed OCR sidecars and structured table extraction |
+| Ranking | Opaque hybrid defaults; frontend skipped reranking | Explainable weighted signals, scope disambiguation, diversity filtering |
+| Answer | First retrieved chunk returned verbatim | Focused cited sentences, numeric/table intent, explicit evidence gaps |
+| Provenance | Local filesystem paths and no page citation | Safe PDF route, source title, page, section, excerpt, and score breakdown |
+| Evaluation | Hard-coded path and only answer-text similarity | Portable qrels, standard IR metrics, per-category reports, failure and abstention metrics |
+| Structure | Duplicate APIs/handlers and unsafe unused utilities | One service layer, thin API, focused scripts, pinned direct dependencies |
+| UI | Generic branding, broken links, fixed non-rerank route | Responsive accessible search, health/retry states, warnings, ranked evidence |
+| Tests | None | 62 backend unit/API/integration tests |
 
-We evaluate the quality of generated answers using three complementary metrics that assess different aspects of text similarity:
+The exact pre-improvement audit is preserved in [docs/PROJECT_AUDIT.md](docs/PROJECT_AUDIT.md).
 
-### BLEU Score
-- **What it measures**: Precision-focused metric that compares n-gram overlap between generated and reference answers
-- **How it works**:
-  - Counts matching n-grams (1-4 words) between generated and reference text
-  - Applies brevity penalty for short answers
-  - Combines scores from different n-gram lengths
-- **Score range**: 0 to 1 (higher is better)
+## Remaining limitations and sensible next steps
 
+- The relevance set has only 44 reference questions, binary document-level judgments, and was used during tuning. Add an independently written held-out set and page/passage-level graded judgments before making broader claims.
+- Four reference answers are not fully supported by the current corpus. Add the missing official policy documents rather than encoding their answers in application logic.
+- The PDFs are a static snapshot and may be outdated. Important eligibility, deadline, and financial information must be verified in the cited document and against the latest official notice.
+- Retrieval is lexical and domain-tuned. It is transparent and fast, but a future experiment could compare it with one small local embedding model on the same qrels; keep the lexical system as a reproducible baseline.
+- OCR sidecars are bound to exact PDF checksums. New image-only or changed PDFs require OCR generation followed by manual visual review.
+- Optional Gemini generation introduces network, quota, latency, and model-availability dependencies. It should remain optional and must not replace source verification.
+- The corpus does not include canonical public URLs for every PDF, so citations link to the bundled local copies.
 
-### ROUGE-L F1 
-- **What it measures**: Identifies the longest sequence of matching words, allowing for gaps
-- **How it works**:
-  - Finds longest common subsequence between texts
-  - Calculates precision (generated text accuracy)
-  - Calculates recall (reference text coverage)
-  - Combines into F1 score
-- **Advantages**:
-  - More flexible than BLEU for word order
-  - Better at handling paraphrasing
-  - Captures sentence structure similarity
-- **Score range**: 0 to 1 (higher is better)
-
-### BERTScore F1
-- **What it measures**: Semantic similarity using contextual embeddings
-- **How it works**:
-  - Generates BERT embeddings for each word
-  - Computes cosine similarity between words
-  - Finds optimal word alignments
-  - Calculates precision and recall using soft token matching
-- **Advantages**:
-  - Captures semantic meaning beyond exact matches
-  - Handles synonyms and paraphrasing well
-  - Correlates better with human judgments
-- **Score range**: 0 to 1 (higher is better)
-
-## 7. Contribution Guide
-
-### Getting Started
-1. Fork the repository
-2. Create a feature branch
-3. Set up development environment
-4. Make changes
-5. Submit pull request
-
-### Development Guidelines
-
-
-1. **Documentation**:
-   - Update README if needed
-   - Document new functions/classes
-   - Add inline comments for complex logic
-
-2. **Version Control**:
-   - Clear commit messages
-   - One feature per branch
-   - Rebase before PR
-
-## 8. Acknowledgements
-
-This project was developed as part of the problem statement given in the course - CS F469 Information Retrieval by [Prof. Prajna Upadhyay](https://www.bits-pilani.ac.in/hyderabad/dr-prajna-devi-upadhyay/) at BITS Pilani Hyderabad Campus.
-
-Team member - Mehul Kochar.
-
+These limitations are intentionally visible: the project favors demonstrable retrieval quality and trustworthy outputs over adding larger infrastructure or flashy features.

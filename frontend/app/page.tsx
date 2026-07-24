@@ -1,190 +1,336 @@
-'use client';
+"use client";
 
-import React, { useState, ChangeEvent, useEffect, useRef } from 'react';
-import { Button } from "@/components/ui/button";
-import { LuSend, LuExternalLink } from "react-icons/lu";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import Loader from '@/components/shared/Loader';
-import HomeStarter from '@/components/shared/HomeStarter';
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger
-} from "@/components/ui/accordion";
+  type FormEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  BookOpenCheck,
+  CircleAlert,
+  Eraser,
+  RefreshCw,
+  Send,
+  UserRound,
+} from "lucide-react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+import HomeStarter from "@/components/shared/HomeStarter";
+import Loader from "@/components/shared/Loader";
+import QueryResult from "@/components/shared/QueryResult";
+import {
+  ApiError,
+  getHealth,
+  searchRegulations,
+  type QueryResponse,
+} from "@/lib/api";
 
-if (!API_BASE_URL) {
-  console.warn("NEXT_PUBLIC_API_URL is not defined");
+type ConnectionState = "checking" | "online" | "offline";
+
+interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  text?: string;
+  result?: QueryResponse;
+  error?: string;
+  retryQuery?: string;
 }
 
-interface SourceDocumentMetadata {
-  file_path?: string;
-  doc_name?: string;
-  source?: string;
-  score?: number;
-  [key: string]: any;
+function messageId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-interface SourceDocument {
-  page_content: string;
-  metadata: SourceDocumentMetadata;
+function connectionLabel(state: ConnectionState): string {
+  if (state === "checking") return "Checking service";
+  if (state === "online") return "Search service ready";
+  return "Search service unavailable";
 }
 
-interface Message {
-  type: 'user' | 'bot';
-  text: string;
-  source_documents?: SourceDocument[];
+function shortConnectionLabel(state: ConnectionState): string {
+  if (state === "checking") return "Checking";
+  if (state === "online") return "Ready";
+  return "Offline";
 }
 
 export default function Home() {
-  const [userQuery, setUserQuery] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [query, setQuery] = useState("");
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [useReranker] = useState(false);
-  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const [connection, setConnection] = useState<ConnectionState>("checking");
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const endOfConversationRef = useRef<HTMLDivElement>(null);
+  const requestInFlightRef = useRef(false);
+
+  const checkConnection = useCallback(async () => {
+    setConnection("checking");
+    try {
+      const health = await getHealth();
+      const status = health.status?.toLowerCase();
+      setConnection(
+        status === "error" || status === "unhealthy" || status === "degraded"
+          ? "offline"
+          : "online",
+      );
+    } catch {
+      setConnection("offline");
+    }
+  }, []);
 
   useEffect(() => {
-    chatContainerRef.current?.scrollTo({
-      top: chatContainerRef.current.scrollHeight,
+    void checkConnection();
+  }, [checkConnection]);
+
+  useEffect(() => {
+    endOfConversationRef.current?.scrollIntoView({
       behavior: "smooth",
+      block: "end",
     });
-  }, [messages]);
+  }, [messages, isLoading]);
 
-  const sendMessage = async (message: string) => {
-    if (!message.trim() || !API_BASE_URL) return;
+  const submitQuery = async (rawQuery: string) => {
+    const normalizedQuery = rawQuery.trim();
+    if (!normalizedQuery || requestInFlightRef.current) return;
 
+    requestInFlightRef.current = true;
+    setMessages((current) => [
+      ...current,
+      { id: messageId(), role: "user", text: normalizedQuery },
+    ]);
+    setQuery("");
     setIsLoading(true);
-    setMessages(prev => [...prev, { type: 'user', text: message }]);
-    setUserQuery("");
-
-    const endpoint = useReranker
-      ? `${API_BASE_URL}/query/hybrid-rerank/`
-      : `${API_BASE_URL}/query/hybrid/`;
 
     try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: message }),
-      });
-
-      if (!res.ok) throw new Error(res.statusText);
-
-      const data = await res.json();
-
-      setMessages(prev => [
-        ...prev,
-        {
-          type: 'bot',
-          text: data.answer,
-          source_documents: data.source_documents,
-        },
+      const result = await searchRegulations(normalizedQuery);
+      setConnection("online");
+      setMessages((current) => [
+        ...current,
+        { id: messageId(), role: "assistant", result },
       ]);
-    } catch (err) {
-      console.error(err);
-      setMessages(prev => [
-        ...prev,
+    } catch (error) {
+      setConnection(
+        error instanceof ApiError && !error.isConnectionError
+          ? "online"
+          : "offline",
+      );
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : "The search could not be completed. Please try again.";
+
+      setMessages((current) => [
+        ...current,
         {
-          type: 'bot',
-          text: "Sorry, I couldn't connect to the backend. Please try again in a moment.",
+          id: messageId(),
+          role: "assistant",
+          error: message,
+          retryQuery: normalizedQuery,
         },
       ]);
     } finally {
+      requestInFlightRef.current = false;
       setIsLoading(false);
     }
   };
 
-  const getDocName = (meta: SourceDocumentMetadata) =>
-    meta.doc_name || meta.file_path?.split('/').pop() || "Source Document";
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submitQuery(query);
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
+  };
+
+  const selectPrompt = (prompt: string) => {
+    setQuery(prompt);
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
+  const clearConversation = () => {
+    setMessages([]);
+    setQuery("");
+    window.requestAnimationFrame(() => composerRef.current?.focus());
+  };
 
   return (
-    <>
-      <main className="flex min-h-screen flex-col items-center px-4 py-24 pb-40 bg-gray-50">
-        <section
-          ref={chatContainerRef}
-          className="w-full max-w-3xl flex flex-col gap-4 overflow-y-auto"
-        >
-          {messages.length === 0 && <HomeStarter />}
+    <div className="flex h-dvh flex-col overflow-hidden bg-slate-50 text-slate-950">
+      <a
+        href="#main-content"
+        className="sr-only z-50 rounded-md bg-white px-3 py-2 text-sm font-semibold text-slate-950 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
+      >
+        Skip to search
+      </a>
 
-          {messages.map((m, i) => (
-            <div key={i} className={`flex gap-3 ${m.type === 'user' ? 'justify-end' : ''}`}>
-              {m.type === 'bot' && (
-                <Avatar>
-                  <AvatarImage src="/user2.png" />
-                  <AvatarFallback>BOT</AvatarFallback>
-                </Avatar>
-              )}
-
-              <div className={`rounded-xl px-4 py-3 max-w-[80%] text-sm bg-white shadow`}>
-                <Markdown remarkPlugins={[remarkGfm]}>{m.text}</Markdown>
-
-                {m.type === 'bot' &&
-                  m.source_documents &&
-                  m.source_documents.length > 0 && (
-                  <Accordion type="single" collapsible className="mt-3">
-                    {m.source_documents.map((doc, idx) => (
-                      <AccordionItem key={idx} value={`doc-${idx}`}>
-                        <AccordionTrigger className="text-xs">
-                          {getDocName(doc.metadata)}
-                        </AccordionTrigger>
-                        <AccordionContent className="text-xs">
-                          <p className="mb-2 whitespace-pre-wrap">{doc.page_content}</p>
-                          {doc.metadata.source && (
-                            <a
-                              href={doc.metadata.source}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-orange-600"
-                            >
-                              Open source <LuExternalLink />
-                            </a>
-                          )}
-                        </AccordionContent>
-                      </AccordionItem>
-                    ))}
-                  </Accordion>
-                )}
-              </div>
-
-              {m.type === 'user' && (
-                <Avatar>
-                  <AvatarImage src="/useres.png" />
-                  <AvatarFallback>YOU</AvatarFallback>
-                </Avatar>
-              )}
+      <header className="z-20 shrink-0 border-b border-slate-200/90 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-orange-400">
+              <BookOpenCheck aria-hidden="true" className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-slate-950 sm:text-base">
+                BITS Research Regulations Search
+              </p>
+              <p className="hidden text-xs text-slate-500 sm:block">
+                Evidence-backed answers from the document corpus
+              </p>
             </div>
-          ))}
+          </div>
 
-          {isLoading && <Loader />}
-        </section>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void checkConnection()}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 sm:px-3"
+              aria-label={`${connectionLabel(connection)}. Check again.`}
+            >
+              <span
+                aria-hidden="true"
+                className={`h-2 w-2 rounded-full ${
+                  connection === "online"
+                    ? "bg-emerald-500"
+                    : connection === "checking"
+                      ? "animate-pulse bg-amber-400"
+                      : "bg-rose-500"
+                }`}
+              />
+              <span className="sm:hidden">{shortConnectionLabel(connection)}</span>
+              <span className="hidden sm:inline">{connectionLabel(connection)}</span>
+              <RefreshCw
+                aria-hidden="true"
+                className={`h-3.5 w-3.5 ${connection === "checking" ? "animate-spin" : ""}`}
+              />
+            </button>
+
+            {messages.length > 0 && (
+              <button
+                type="button"
+                onClick={clearConversation}
+                disabled={isLoading}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Clear conversation"
+                title="Clear conversation"
+              >
+                <Eraser aria-hidden="true" className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main id="main-content" className="min-h-0 w-full flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
+          {messages.length === 0 ? (
+            <HomeStarter onSelectPrompt={selectPrompt} />
+          ) : (
+            <section
+              className="mx-auto w-full max-w-4xl space-y-5 py-7 sm:py-10"
+              aria-label="Search conversation"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+              aria-busy={isLoading}
+            >
+              {messages.map((message) =>
+                message.role === "user" ? (
+                  <article key={message.id} className="flex justify-end" aria-label="Your question">
+                    <div className="flex max-w-[92%] items-start gap-2.5 sm:max-w-[78%]">
+                      <div className="rounded-2xl rounded-tr-md bg-slate-900 px-4 py-3 text-[15px] leading-6 text-white shadow-sm">
+                        {message.text}
+                      </div>
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm">
+                        <UserRound aria-hidden="true" className="h-4 w-4" />
+                      </span>
+                    </div>
+                  </article>
+                ) : (
+                  <article key={message.id} className="flex items-start gap-2.5" aria-label="Search answer">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-100 text-orange-700">
+                      {message.error ? (
+                        <CircleAlert aria-hidden="true" className="h-4 w-4" />
+                      ) : (
+                        <BookOpenCheck aria-hidden="true" className="h-4 w-4" />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1 rounded-2xl rounded-tl-md border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-6 sm:py-5">
+                      {message.result && <QueryResult result={message.result} />}
+                      {message.error && (
+                        <div role="alert">
+                          <h2 className="text-sm font-semibold text-slate-900">Search unavailable</h2>
+                          <p className="mt-1 text-sm leading-6 text-slate-600">{message.error}</p>
+                          {message.retryQuery && (
+                            <button
+                              type="button"
+                              onClick={() => void submitQuery(message.retryQuery || "")}
+                              disabled={isLoading}
+                              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
+                              Try again
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                ),
+              )}
+
+              {isLoading && <Loader />}
+              <div ref={endOfConversationRef} aria-hidden="true" />
+            </section>
+          )}
+        </div>
       </main>
 
-      <footer className="fixed bottom-0 w-full bg-white border-t p-3">
-        <div className="max-w-3xl mx-auto flex gap-2">
-          <input
-            value={userQuery}
-            onChange={(e) => setUserQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && sendMessage(userQuery)}
-            disabled={isLoading}
-            className="flex-1 border rounded-xl px-4 py-2 text-sm outline-none"
-            placeholder="Ask something..."
-          />
-          <Button
-            onClick={() => sendMessage(userQuery)}
-            disabled={isLoading || !userQuery.trim()}
-            className="rounded-xl bg-orange-500 hover:bg-orange-600"
-          >
-            <LuSend className="text-white" />
-          </Button>
-        </div>
-        <p className="text-[11px] text-center mt-1 text-gray-500">
-          Disclaimer: AI-generated responses may contain errors.
-        </p>
+      <footer className="z-10 shrink-0 border-t border-slate-200 bg-white/95 backdrop-blur">
+        <form
+          onSubmit={handleSubmit}
+          className="mx-auto w-full max-w-4xl px-4 py-3 sm:px-6 sm:py-4"
+        >
+          <label htmlFor="research-query" className="sr-only">
+            Ask a question about BITS research regulations
+          </label>
+          <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white p-2 shadow-sm transition focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-100">
+            <textarea
+              ref={composerRef}
+              id="research-query"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              rows={1}
+              maxLength={500}
+              disabled={isLoading}
+              className="max-h-32 min-h-10 flex-1 resize-y bg-transparent px-2 py-2 text-[15px] leading-6 text-slate-900 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+              placeholder="Ask about fellowships, thesis submission, travel grants…"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !query.trim()}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-600 text-white shadow-sm transition hover:bg-orange-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300"
+              aria-label="Send question"
+            >
+              <Send aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between gap-3 px-1 text-[11px] text-slate-500">
+            <span>Enter to search · Shift+Enter for a new line</span>
+            <span>{query.length}/500</span>
+          </div>
+          <p className="mt-1 text-center text-[11px] leading-4 text-slate-500">
+            Answers can be incomplete. Verify important information in the cited PDFs.
+          </p>
+        </form>
       </footer>
-    </>
+    </div>
   );
 }

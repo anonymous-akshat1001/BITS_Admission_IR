@@ -1,34 +1,7 @@
-# Core RAG components
-langchain
-langchain-openai
-langchain-qdrant
-langchain-community
-qdrant-client
-fastembed
-
-# Required for fastembed (CPU-only ONNX backend)
-onnxruntime
-
-# Reranking
-sentence-transformers
-
-# API + Environment
-fastapi
-uvicorn[standard]
-python-dotenv
-tiktoken
-
-# PDF & DOCX handling
-pymupdf
-pdfplumber
-python-docx
-
-# Evaluation tools
-requests
-nltk
-rouge-score
-bert-score
-
-# Misc
-pandas
-psutil
+# Small, CPU-only runtime with pinned direct dependencies. No Qdrant or paid model is required.
+fastapi==0.128.8
+httpx==0.28.1
+pymupdf==1.26.5
+pydantic==2.13.4
+python-dotenv==1.2.1
+uvicorn[standard]==0.39.0

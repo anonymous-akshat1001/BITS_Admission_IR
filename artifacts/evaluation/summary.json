@@ -1,0 +1,342 @@
+{
+  "generated_at_utc": "2026-07-22T22:35:15.715638+00:00",
+  "baseline_limitation": "The legacy result is a reproducible local proxy, not a historical measurement. The original repository did not include its Qdrant index, credentials, or saved results; the proxy retains its whole-document lossy cleanup, 600-character chunks, and top-chunk answer, while using transparent unigram TF-IDF in place of unavailable vector services.",
+  "answerable_query_count": 40,
+  "source_gap_query_count": 4,
+  "unanswerable_query_count": 18,
+  "retrieval_depth_chunks": 10,
+  "inputs": {
+    "corpus_dir": "document_corpus",
+    "queries": "data/evaluation/queries.csv",
+    "qrels": "data/evaluation/qrels.csv",
+    "source_gaps": "data/evaluation/source_gaps.csv",
+    "unanswerable": "data/evaluation/unanswerable.csv"
+  },
+  "input_sha256": {
+    "queries": "8ba1c60dbd140b23511e079be4e4536977d41c943bac75aba031c809f530f104",
+    "qrels": "0a33e3765e770410e2d820f4d25cd620c3983735a3beaf73c6700b61732de223",
+    "source_gaps": "e2bf6ac25899b0adb88a8e3c35fad36e57221d255f49d4e6636c13c426d299c7",
+    "unanswerable": "da555e846754685657d37cb0e7f729ff6eb2faa65a335a92899b7b95be6f8504"
+  },
+  "run_environment": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python": "3.9.6",
+    "pymupdf": "1.26.5",
+    "pdf_corpus_sha256": "1d3a44d663780e97f1e8ee07f3ae1fa5416ce5cedcb7a4c0c2d0e77e977ef387",
+    "effective_corpus_sha256": "324d5f53f4ad53fa01318ef075d91c12e0e64409d01d4bc9784e14de54db17da",
+    "ocr_sidecar_sha256": {
+      "data/ocr/Institute-Fellowship-policy-for_PhD.json": "d147c981b97701b550afba1dbc518bbcd48ac8cdca196d908d464d6844495c54",
+      "data/ocr/Travel-Grant-for-Registered-Ph.d-Student.json": "8d0288a7c8a02d033ac5c329f1033ceba852d3f2033ad5f3ca2e5921669e968c"
+    },
+    "implementation_sha256": {
+      "backend/ir_system/__init__.py": "0aa011926f8378cff0dacea844ce77819eb3de985738501d511448b786d08d4d",
+      "backend/ir_system/answering.py": "581b4a59ec3a161d22979f5c4eca8929b2cf523d0227cdc34b748aa9172fba59",
+      "backend/ir_system/baseline.py": "32cfc121504f8b3ba9848d3d43219de9438055eddbff12fb659780805d16eb1e",
+      "backend/ir_system/config.py": "f25c862c8fbf7ed7a1d5eb2c21d0d7b910172086c6c5bffb9230a991d50ac002",
+      "backend/ir_system/corpus.py": "b3ff1a4f2c765f230bc1c3707340ba202ce94c656c80e1e6717cc77ab38e389c",
+      "backend/ir_system/generation.py": "0a66546b6130fa53374da083f274cd9ad4f8084769450c665cba9d82c8dea7d6",
+      "backend/ir_system/metrics.py": "65c2a18e41d0bee3bdc0a3c5b3d2b17cd7361d06614e1fd16c67a15987c23539",
+      "backend/ir_system/models.py": "7a259292f35d91bcc3d04f014a8865549cf77ad1f3094816d1ec04a694553a2a",
+      "backend/ir_system/preprocessing.py": "4c8d9d9e23541fb8cc384b20a59e408442337acbc8c8adbd2c57ff191513ea9f",
+      "backend/ir_system/retrieval.py": "0225dc41a02fb8a74587f1a327c6c4c3d467bbccb1da68e5727c45b19a7c8f87",
+      "backend/ir_system/service.py": "44af5c66af38d76090864eb9168d3c9f24830f28dde22551415d209be0791b46",
+      "backend/requirements-dev.txt": "3c3ad6730cf0c0417b77bae38e53c11fa8cd96a34f2f8956998bafc0aaf3ef17",
+      "backend/requirements.txt": "d9990037963c044b972a49f8f5d607bf03faf45f89f209c47f222870ca5ac977",
+      "backend/scripts/evaluate.py": "b42a5a5bb96ce80e69a50128534200de7afedb58efc4a2aadcb2b7cd880a5892"
+    },
+    "settings": {
+      "chunk_size": 900,
+      "chunk_overlap": 140,
+      "max_chunks_per_document": 2,
+      "ocr_enabled": false,
+      "answer_mode": "extractive",
+      "retrieval_depth_chunks": 10
+    },
+    "git": {
+      "commit": "f281bd5dea26d60c05bc94a89458a624a9fc5145",
+      "working_tree_dirty": true
+    }
+  },
+  "corpus": {
+    "document_count": 52,
+    "page_count": 171,
+    "chunk_count": 375,
+    "searchable_document_count": 52,
+    "scanned_or_empty_documents": [],
+    "ocr_sidecar_documents": [
+      "Institute-Fellowship-policy-for_PhD.pdf",
+      "Travel-Grant-for-Registered-Ph.d-Student.pdf"
+    ],
+    "ocr_failures": []
+  },
+  "metric_notes": {
+    "document_ranking": "First occurrence of each filename among up to 10 ranked chunks.",
+    "relevance": "Binary document-level judgments.",
+    "latency": "Successful measured calls across supported, source-gap, and OOD queries after one unmeasured warm-up; initialization excluded.",
+    "failures": "Retained as zero quality scores and included in failure rate."
+  },
+  "systems": {
+    "legacy_proxy": {
+      "display_name": "Legacy-style TF-IDF proxy",
+      "initialization_ms": 408.775084,
+      "overall": {
+        "answerable_query_count": 40,
+        "source_gap_query_count": 4,
+        "unanswerable_query_count": 18,
+        "evaluated_query_count": 62,
+        "hit_at_1": 0.7954545454545454,
+        "hit_at_3": 0.9090909090909091,
+        "hit_at_5": 0.9318181818181818,
+        "mrr_at_10": 0.8541666666666665,
+        "ndcg_at_5": 0.8528619915844433,
+        "answer_token_f1": 0.21498029932327745,
+        "rouge_l_f1": 0.18146759045560384,
+        "latency_p50_ms": 0.21179149999994706,
+        "latency_p95_ms": 0.26075900000022134,
+        "failure_count": 0,
+        "failure_rate": 0.0,
+        "unanswerable_abstention_accuracy": 0.0,
+        "answerable_abstention_rate": 0.0,
+        "source_gap_abstention_accuracy": 0.0
+      },
+      "categories": {
+        "drc": {
+          "query_count": 11,
+          "supported_answer_query_count": 10,
+          "source_gap_query_count": 1,
+          "hit_at_1": 0.9090909090909091,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 0.9545454545454546,
+          "ndcg_at_5": 0.9591500493381495,
+          "answer_token_f1": 0.27183087513666443,
+          "rouge_l_f1": 0.2360462835585888,
+          "latency_p50_ms": 0.22366600000012227,
+          "latency_p95_ms": 0.24935399999992391,
+          "failure_rate": 0.0
+        },
+        "fellowship": {
+          "query_count": 1,
+          "supported_answer_query_count": 0,
+          "source_gap_query_count": 1,
+          "hit_at_1": 1.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 1.0,
+          "ndcg_at_5": 1.0,
+          "answer_token_f1": 0.0,
+          "rouge_l_f1": 0.0,
+          "latency_p50_ms": 0.25695900000011207,
+          "latency_p95_ms": 0.25695900000011207,
+          "failure_rate": 0.0
+        },
+        "gcir": {
+          "query_count": 18,
+          "supported_answer_query_count": 18,
+          "source_gap_query_count": 0,
+          "hit_at_1": 0.9444444444444444,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 0.9722222222222222,
+          "ndcg_at_5": 0.9794960974206366,
+          "answer_token_f1": 0.14237096375650854,
+          "rouge_l_f1": 0.12088958573757363,
+          "latency_p50_ms": 0.20831250000008517,
+          "latency_p95_ms": 0.2882641999998547,
+          "failure_rate": 0.0
+        },
+        "programme": {
+          "query_count": 9,
+          "supported_answer_query_count": 7,
+          "source_gap_query_count": 2,
+          "hit_at_1": 0.5555555555555556,
+          "hit_at_3": 0.7777777777777778,
+          "hit_at_5": 0.8888888888888888,
+          "mrr_at_10": 0.6759259259259259,
+          "ndcg_at_5": 0.661943836243318,
+          "answer_token_f1": 0.28511376321924325,
+          "rouge_l_f1": 0.21559482296028604,
+          "latency_p50_ms": 0.23312500000027825,
+          "latency_p95_ms": 0.2550754000001376,
+          "failure_rate": 0.0
+        },
+        "proposal": {
+          "query_count": 1,
+          "supported_answer_query_count": 1,
+          "source_gap_query_count": 0,
+          "hit_at_1": 0.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 0.5,
+          "ndcg_at_5": 0.38685280723454163,
+          "answer_token_f1": 0.09448818897637795,
+          "rouge_l_f1": 0.07874015748031496,
+          "latency_p50_ms": 0.2460420000001129,
+          "latency_p95_ms": 0.2460420000001129,
+          "failure_rate": 0.0
+        },
+        "travel": {
+          "query_count": 4,
+          "supported_answer_query_count": 4,
+          "source_gap_query_count": 0,
+          "hit_at_1": 0.5,
+          "hit_at_3": 0.5,
+          "hit_at_5": 0.5,
+          "mrr_at_10": 0.5,
+          "ndcg_at_5": 0.5,
+          "answer_token_f1": 0.30698533560905517,
+          "rouge_l_f1": 0.2835810802899062,
+          "latency_p50_ms": 0.23156250000000433,
+          "latency_p95_ms": 0.24616865000002264,
+          "failure_rate": 0.0
+        }
+      },
+      "unanswerable_categories": {
+        "adversarial_paraphrase": {
+          "query_count": 6,
+          "abstention_accuracy": 0.0
+        },
+        "hard_negative": {
+          "query_count": 8,
+          "abstention_accuracy": 0.0
+        },
+        "no_domain_anchor": {
+          "query_count": 4,
+          "abstention_accuracy": 0.0
+        }
+      }
+    },
+    "improved": {
+      "display_name": "Improved local SearchService",
+      "initialization_ms": 2430.125958,
+      "overall": {
+        "answerable_query_count": 40,
+        "source_gap_query_count": 4,
+        "unanswerable_query_count": 18,
+        "evaluated_query_count": 62,
+        "hit_at_1": 1.0,
+        "hit_at_3": 1.0,
+        "hit_at_5": 1.0,
+        "mrr_at_10": 1.0,
+        "ndcg_at_5": 0.9824157814893391,
+        "answer_token_f1": 0.3811274204074653,
+        "rouge_l_f1": 0.3199682080313015,
+        "latency_p50_ms": 9.956395499999937,
+        "latency_p95_ms": 16.294181249999994,
+        "failure_count": 0,
+        "failure_rate": 0.0,
+        "unanswerable_abstention_accuracy": 1.0,
+        "answerable_abstention_rate": 0.0,
+        "source_gap_abstention_accuracy": 1.0
+      },
+      "categories": {
+        "drc": {
+          "query_count": 11,
+          "supported_answer_query_count": 10,
+          "source_gap_query_count": 1,
+          "hit_at_1": 1.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 1.0,
+          "ndcg_at_5": 0.964831562978678,
+          "answer_token_f1": 0.5288083512264572,
+          "rouge_l_f1": 0.47002818649633865,
+          "latency_p50_ms": 10.409334000000214,
+          "latency_p95_ms": 13.513416999999972,
+          "failure_rate": 0.0
+        },
+        "fellowship": {
+          "query_count": 1,
+          "supported_answer_query_count": 0,
+          "source_gap_query_count": 1,
+          "hit_at_1": 1.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 1.0,
+          "ndcg_at_5": 1.0,
+          "answer_token_f1": 0.0,
+          "rouge_l_f1": 0.0,
+          "latency_p50_ms": 9.55895799999995,
+          "latency_p95_ms": 9.55895799999995,
+          "failure_rate": 0.0
+        },
+        "gcir": {
+          "query_count": 18,
+          "supported_answer_query_count": 18,
+          "source_gap_query_count": 0,
+          "hit_at_1": 1.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 1.0,
+          "ndcg_at_5": 1.0,
+          "answer_token_f1": 0.27857524633205505,
+          "rouge_l_f1": 0.2246136078380805,
+          "latency_p50_ms": 12.093145999999999,
+          "latency_p95_ms": 18.99346245000015,
+          "failure_rate": 0.0
+        },
+        "programme": {
+          "query_count": 9,
+          "supported_answer_query_count": 7,
+          "source_gap_query_count": 2,
+          "hit_at_1": 1.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 1.0,
+          "ndcg_at_5": 0.9570163547517176,
+          "answer_token_f1": 0.3666848515292706,
+          "rouge_l_f1": 0.2777997422852355,
+          "latency_p50_ms": 9.988290999999982,
+          "latency_p95_ms": 11.703316399999864,
+          "failure_rate": 0.0
+        },
+        "proposal": {
+          "query_count": 1,
+          "supported_answer_query_count": 1,
+          "source_gap_query_count": 0,
+          "hit_at_1": 1.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 1.0,
+          "ndcg_at_5": 1.0,
+          "answer_token_f1": 0.2105263157894737,
+          "rouge_l_f1": 0.12631578947368421,
+          "latency_p50_ms": 16.121875000000063,
+          "latency_p95_ms": 16.121875000000063,
+          "failure_rate": 0.0
+        },
+        "travel": {
+          "query_count": 4,
+          "supported_answer_query_count": 4,
+          "source_gap_query_count": 0,
+          "hit_at_1": 1.0,
+          "hit_at_3": 1.0,
+          "hit_at_5": 1.0,
+          "mrr_at_10": 1.0,
+          "ndcg_at_5": 1.0,
+          "answer_token_f1": 0.5413346483906701,
+          "rouge_l_f1": 0.4961218824332233,
+          "latency_p50_ms": 10.058541500000073,
+          "latency_p95_ms": 12.833032949999756,
+          "failure_rate": 0.0
+        }
+      },
+      "unanswerable_categories": {
+        "adversarial_paraphrase": {
+          "query_count": 6,
+          "abstention_accuracy": 1.0
+        },
+        "hard_negative": {
+          "query_count": 8,
+          "abstention_accuracy": 1.0
+        },
+        "no_domain_anchor": {
+          "query_count": 4,
+          "abstention_accuracy": 1.0
+        }
+      }
+    }
+  }
+}

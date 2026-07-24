@@ -1,0 +1,19 @@
+query_id,category,Question
+U01,no_domain_anchor,What is the current BITSAT application deadline?
+U02,no_domain_anchor,What is today's menu in the Hyderabad campus mess?
+U03,hard_negative,What are the undergraduate hostel fees for this semester?
+U04,no_domain_anchor,When does the main library close on Sundays?
+U05,no_domain_anchor,Who is the captain of the institute football team?
+U06,hard_negative,What is the PhD hostel fee for this semester?
+U07,hard_negative,Which research award did the institute football team win?
+U08,hard_negative,Who is the faculty captain of the football team?
+U09,hard_negative,What is the travel policy for undergraduate students?
+U10,hard_negative,What is NASA's research budget?
+U11,hard_negative,What is the IIT Bombay PhD fellowship amount?
+U12,hard_negative,What is the current PhD application deadline?
+U13,adversarial_paraphrase,When is the next round of PhD applications due?
+U14,adversarial_paraphrase,How much is PhD tuition in 2027?
+U15,adversarial_paraphrase,Who received the institute research prize this year?
+U16,adversarial_paraphrase,May research scholars keep dogs in campus accommodation?
+U17,adversarial_paraphrase,How much fellowship does stanford university pay its PhD scholars?
+U18,adversarial_paraphrase,What fellowship amount does iit delhi provide to PhD students?

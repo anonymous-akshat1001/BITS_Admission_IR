@@ -6,7 +6,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.pyc
 
 # Ignore IDE-specific files
 .vscode/
@@ -25,12 +24,12 @@ env/
 # Ignore log files
 *.log
 
-# Ignore MongoDB local data
-/data/
-
 # Ignore downloaded or generated files
 /downloaded_documents/
-/document_corpus/
+/.pytest_cache/
+/backend/.pytest_cache/
+/artifacts/*.tmp
+/tmp/
 
 # Ignore macOS system files
 .DS_Store
